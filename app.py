@@ -300,7 +300,7 @@ def get_ai_recommendation(violation_data, page_context):
     
     try:
         msg = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="model="claude-3-haiku-20240307",
             max_tokens=600,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}]
