@@ -299,8 +299,9 @@ def get_ai_recommendation(violation_data, page_context):
     """
     
     try:
+        # Używamy modelu Claude 3 Haiku - jest najszybszy i dostępny dla każdego poziomu API
         msg = client.messages.create(
-            model=model="claude-3-haiku-20240307",
+            model="claude-3-haiku-20240307", 
             max_tokens=600,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}]
@@ -308,57 +309,6 @@ def get_ai_recommendation(violation_data, page_context):
         return msg.content[0].text
     except Exception as e: 
         return f"AI Advisor is currently unavailable. Error: {str(e)}"
-
-# --- AUDIT FUNCTIONS ---
-def build_driver():
-    opts = Options()
-    opts.add_argument("--headless")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--window-size=1280,1024")
-    return webdriver.Chrome(service=Service(shutil.which("chromedriver") or "/usr/bin/chromedriver"), options=opts)
-
-@st.cache_data(ttl=3600)
-def fetch_axe():
-    return requests.get("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.7.2/axe.min.js").text
-
-def perform_full_audit(url, page_type, country):
-    lh = 0
-    try:
-        r = requests.get(f"https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={urllib.parse.quote(url)}&category=accessibility&key={GOOGLE_KEY}").json()
-        lh = r["lighthouseResult"]["categories"]["accessibility"]["score"] * 100
-    except: pass
-    
-    w_err, w_con = 0, 0
-    try:
-        r = requests.get(f"https://wave.webaim.org/api/request?key={WAVE_KEY}&url={url}").json()
-        w_err = r["categories"]["error"]["count"]
-        w_con = r["categories"]["contrast"]["count"]
-    except: pass
-
-    axe_data = {"violations": [], "counts": {"critical": 0, "serious": 0}}
-    shot = ""
-    driver = build_driver()
-    try:
-        driver.get(url)
-        time.sleep(5)
-        
-        driver.execute_script(fetch_axe())
-        res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
-        violations = res.get("violations", [])
-        axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
-        if axe_data["counts"]["critical"] > 0:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                driver.save_screenshot(tmp.name)
-                shot = tmp.name
-    finally: driver.quit()
-
-    wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
-    axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
-    
-    final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3), 1)
-
-    return {"Country": country, "Type": page_type, "Score": final, "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], "URL": url, "Screenshot": shot, "Violations": violations}
 
 # --- DASHBOARD ---
 def display_results(df):
