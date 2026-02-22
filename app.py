@@ -46,7 +46,7 @@ except KeyError:
 
 client = anthropic.Anthropic(api_key=CLAUDE_KEY)
 
-# --- DATA & MAPPING (Updated for WCAG 2.2 Links) ---
+# --- DATA & MAPPING ---
 AXE_TO_WCAG = {
     "color-contrast": {"name": "SC 1.4.3 (Contrast Minimum)", "url": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html"},
     "image-alt": {"name": "SC 1.1.1 (Non-text Content)", "url": "https://www.w3.org/WAI/WCAG22/Understanding/non-text-content.html"},
@@ -299,7 +299,7 @@ def get_ai_recommendation(violation_data, page_context):
     """
     
     try:
-        # Używamy modelu Claude 3 Haiku - jest najszybszy i dostępny dla każdego poziomu API
+        # Używamy modelu Claude 3 Haiku - jest darmowy i nie wyrzuci błędu 404
         msg = client.messages.create(
             model="claude-3-haiku-20240307", 
             max_tokens=600,
@@ -309,6 +309,57 @@ def get_ai_recommendation(violation_data, page_context):
         return msg.content[0].text
     except Exception as e: 
         return f"AI Advisor is currently unavailable. Error: {str(e)}"
+
+# --- AUDIT FUNCTIONS ---
+def build_driver():
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1280,1024")
+    return webdriver.Chrome(service=Service(shutil.which("chromedriver") or "/usr/bin/chromedriver"), options=opts)
+
+@st.cache_data(ttl=3600)
+def fetch_axe():
+    return requests.get("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.7.2/axe.min.js").text
+
+def perform_full_audit(url, page_type, country):
+    lh = 0
+    try:
+        r = requests.get(f"https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={urllib.parse.quote(url)}&category=accessibility&key={GOOGLE_KEY}").json()
+        lh = r["lighthouseResult"]["categories"]["accessibility"]["score"] * 100
+    except: pass
+    
+    w_err, w_con = 0, 0
+    try:
+        r = requests.get(f"https://wave.webaim.org/api/request?key={WAVE_KEY}&url={url}").json()
+        w_err = r["categories"]["error"]["count"]
+        w_con = r["categories"]["contrast"]["count"]
+    except: pass
+
+    axe_data = {"violations": [], "counts": {"critical": 0, "serious": 0}}
+    shot = ""
+    driver = build_driver()
+    try:
+        driver.get(url)
+        time.sleep(5)
+        
+        driver.execute_script(fetch_axe())
+        res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
+        violations = res.get("violations", [])
+        axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
+        if axe_data["counts"]["critical"] > 0:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                driver.save_screenshot(tmp.name)
+                shot = tmp.name
+    finally: driver.quit()
+
+    wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
+    axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
+    
+    final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3), 1)
+
+    return {"Country": country, "Type": page_type, "Score": final, "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], "URL": url, "Screenshot": shot, "Violations": violations}
 
 # --- DASHBOARD ---
 def display_results(df):
@@ -320,6 +371,8 @@ def display_results(df):
 
     st.subheader("Market Compliance Heatmap")
     pivot = df.pivot_table(index="Country", columns="Type", values="Score")
+    
+    # Naprawione kolory heatmapy (skala 0-100 na sztywno)
     st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
 
     st.subheader("❌ Detailed WCAG Violations (Prioritized)")
@@ -344,7 +397,6 @@ def display_results(df):
     
     if violation_rows:
         v_df = pd.DataFrame(violation_rows)
-        # Sort by severity to show Critical first
         impact_order = {"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}
         v_df["sort_idx"] = v_df["Impact"].map(impact_order).fillna(4)
         v_df = v_df.sort_values(by=["sort_idx", "Country"]).drop(columns=["sort_idx"])
@@ -379,11 +431,9 @@ def display_results(df):
             except: violations = []
 
         if violations:
-            # Sort violations within the AI loop to prioritize critical ones
             sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1, "moderate": 2, "minor": 3}.get(x.get("impact"), 4))
             
             with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()} (Top Issue)"):
-                # Only analyzing the top highest severity issue to save tokens/time
                 top_v = sorted_violations[0] 
                 st.write(f"**Top Issue Detected:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
                 st.markdown(get_ai_recommendation(top_v, row['Type']))
@@ -397,7 +447,6 @@ if check_password():
         if "last_res" in st.session_state:
             st.divider()
             
-            # 1. CSV Download
             csv = st.session_state["last_res"].to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Data (CSV)",
@@ -407,7 +456,6 @@ if check_password():
                 use_container_width=True
             )
             
-            # 2. Audit Report PDF Download
             try:
                 report_pdf_bytes = generate_w3c_pdf(st.session_state["last_res"])
                 st.download_button(
@@ -420,7 +468,6 @@ if check_password():
             except Exception as e:
                 st.error(f"Report PDF Gen Error: {e}")
 
-            # 3. Accessibility Statement PDF Download
             try:
                 statement_pdf_bytes = generate_accessibility_statement_pdf(st.session_state["last_res"])
                 st.download_button(
