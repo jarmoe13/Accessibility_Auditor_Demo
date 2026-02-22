@@ -1,0 +1,8 @@
+streamlit
+selenium
+anthropic
+pandas
+plotly
+requests
+matplotlib
+fpdf
