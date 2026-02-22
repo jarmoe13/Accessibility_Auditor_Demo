@@ -320,7 +320,7 @@ def display_results(df):
 
     st.subheader("Market Compliance Heatmap")
     pivot = df.pivot_table(index="Country", columns="Type", values="Score")
-    st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", low=0.4, high=0.9), use_container_width=True)
+    st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
 
     st.subheader("❌ Detailed WCAG Violations (Prioritized)")
     violation_rows = []
