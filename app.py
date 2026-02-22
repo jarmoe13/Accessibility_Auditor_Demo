@@ -279,7 +279,7 @@ def get_ai_recommendation(violation_data, page_context):
     
     prompt = f"""
     Analyze this WCAG violation found on the Lyreco {page_context} page:
-    Violation ID: {violation_data['id']}
+    Violation ID: {violation_data.get('id', 'unknown')}
     Impact: {violation_data.get('impact', 'unknown')}
     Description: {violation_data.get('help', '')}
     
@@ -297,13 +297,14 @@ def get_ai_recommendation(violation_data, page_context):
     ### ⚙️ Needs Manual Testing
     (Specify what MUST be tested manually since automated tools cannot verify it, e.g., focus order, logical alt text)
     """
+    
     try:
-      msg = client.messages.create(
-            model="claude-3-5-sonnet-latest", # <-- Zmiana na najnowszą, dynamiczną wersję
+        msg = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
             max_tokens=600,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}]
-     )
+        )
         return msg.content[0].text
     except Exception as e: 
         return f"AI Advisor is currently unavailable. Error: {str(e)}"
