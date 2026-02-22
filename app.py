@@ -193,7 +193,13 @@ def generate_w3c_pdf(df):
             pdf.set_font('Arial', '', 8)
             for v in serious_violations:
                 impact = v.get('impact', 'minor').upper()
-                pdf.set_text_color(200, 0, 0) if impact == 'CRITICAL' else pdf.set_text_color(0)
+                
+                # Zmieniony fragment chroniący przed 'None' w UI:
+                if impact == 'CRITICAL':
+                    pdf.set_text_color(200, 0, 0)
+                else:
+                    pdf.set_text_color(0)
+                    
                 pdf.cell(30, 8, impact, 1, 0, 'C')
                 
                 pdf.set_text_color(0)
