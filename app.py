@@ -298,8 +298,8 @@ def get_ai_recommendation(violation_data, page_context):
     (Specify what MUST be tested manually since automated tools cannot verify it, e.g., focus order, logical alt text)
     """
     try:
-        msg = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
+       msg = client.messages.create(
+            model="claude-3-5-sonnet-latest", # <-- Zmiana na najnowszą, dynamiczną wersję
             max_tokens=600,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}]
