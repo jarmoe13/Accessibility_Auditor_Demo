@@ -15,6 +15,8 @@ from fpdf import FPDF
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys # 👈 Nowe do Tab-Analyzera
+from selenium.webdriver.common.action_chains import ActionChains # 👈 Nowe do Tab-Analyzera
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Lyreco Accessibility Monitor", layout="wide")
@@ -136,7 +138,7 @@ def generate_w3c_pdf(df):
     
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 8, f"Date: {datetime.now().strftime('%B %d, %Y')}", 0, 1, 'L')
-    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent", 0, 1, 'L')
+    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent (v8.1)", 0, 1, 'L')
     pdf.ln(10)
 
     pdf.chapter_title("1. Executive Summary")
@@ -147,10 +149,12 @@ def generate_w3c_pdf(df):
     elif avg_score >= 80: verdict = "Good Compliance"
     elif avg_score >= 60: verdict = "Partial Compliance"
     
+    tab_sum = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
+    
     summary_text = (
         f"This report presents the results of an automated accessibility evaluation of the Lyreco e-commerce platform across selected markets. "
         f"The overall accessibility score is {avg_score:.1f}/100, categorized as '{verdict}'. "
-        f"The evaluation highlights {int(df['Critical'].sum())} critical blockers and {int(df['Serious'].sum())} serious issues that require immediate attention to meet WCAG 2.2 AA standards."
+        f"The evaluation highlights {int(df['Critical'].sum())} critical blockers, {int(df['Serious'].sum())} serious issues, and {tab_sum} keyboard navigation barriers that require immediate attention to meet WCAG 2.2 AA standards."
     )
     pdf.chapter_body(summary_text)
 
@@ -175,10 +179,15 @@ def generate_w3c_pdf(df):
         if isinstance(violations, str):
             try: violations = ast.literal_eval(violations)
             except: violations = []
+            
+        tab_issues = row.get("Tab_Issues_Details", "[]")
+        if isinstance(tab_issues, str):
+            try: tab_issues = ast.literal_eval(tab_issues)
+            except: tab_issues = []
         
         serious_violations = [v for v in violations if v.get('impact') in ['critical', 'serious']]
         
-        if serious_violations:
+        if serious_violations or tab_issues:
             pdf.set_font('Arial', 'B', 11)
             pdf.set_text_color(45, 46, 135)
             pdf.cell(0, 10, f"{row['Country']} - {row['Type'].capitalize()} (Score: {row['Score']})", 0, 1)
@@ -191,10 +200,19 @@ def generate_w3c_pdf(df):
             pdf.cell(100, 8, "Description", 1, 1, 'C', 1)
             
             pdf.set_font('Arial', '', 8)
+            
+            # Najpierw Tab Issues
+            for t_issue in tab_issues:
+                pdf.set_text_color(200, 0, 0)
+                pdf.cell(30, 8, "CRITICAL", 1, 0, 'C')
+                pdf.set_text_color(0)
+                pdf.cell(60, 8, "keyboard-nav-trap", 1, 0)
+                desc = (t_issue[:55] + '..') if len(t_issue) > 55 else t_issue
+                pdf.cell(100, 8, desc, 1, 1)
+                
+            # Potem Axe Violations
             for v in serious_violations:
                 impact = v.get('impact', 'minor').upper()
-                
-                # Zmieniony fragment chroniący przed 'None' w UI:
                 if impact == 'CRITICAL':
                     pdf.set_text_color(200, 0, 0)
                 else:
@@ -204,7 +222,8 @@ def generate_w3c_pdf(df):
                 
                 pdf.set_text_color(0)
                 pdf.cell(60, 8, v['id'], 1, 0)
-                pdf.cell(100, 8, v['help'], 1, 1)
+                desc = (v['help'][:55] + '..') if len(v['help']) > 55 else v['help']
+                pdf.cell(100, 8, desc, 1, 1)
             pdf.ln(5)
             
     return pdf.output(dest='S').encode('latin-1', 'replace')
@@ -230,6 +249,7 @@ def generate_accessibility_statement_pdf(df):
     pdf.set_font('Arial', '', 11)
     pdf.cell(0, 6, "- Automated evaluation using Axe-core, WAVE, and Google Lighthouse.", 0, 1)
     pdf.cell(0, 6, "- AI-driven heuristic analysis based on WCAG 2.2 criteria.", 0, 1)
+    pdf.cell(0, 6, "- Automated Keyboard Navigation simulation (Tab-Analyzer).", 0, 1)
     pdf.ln(5)
 
     pdf.chapter_title("Identified Limitations")
@@ -237,11 +257,14 @@ def generate_accessibility_statement_pdf(df):
     
     total_critical = int(df['Critical'].sum())
     total_serious = int(df['Serious'].sum())
+    total_tab = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
+    
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 6, f"Current Audit Metrics (Date: {datetime.now().strftime('%Y-%m-%d')}):", 0, 1)
     pdf.set_font('Arial', '', 11)
     pdf.cell(0, 6, f"- Critical Access Blockers: {total_critical}", 0, 1)
     pdf.cell(0, 6, f"- Serious Accessibility Issues: {total_serious}", 0, 1)
+    pdf.cell(0, 6, f"- Keyboard Navigation Barriers: {total_tab}", 0, 1) # 👈 Uwzględnione w deklaracji!
     pdf.ln(5)
     
     pdf.chapter_title("Feedback & Contact")
@@ -305,7 +328,6 @@ def get_ai_recommendation(violation_data, page_context):
     """
     
     try:
-        # Używamy modelu Claude 3 Haiku - jest darmowy i nie wyrzuci błędu 404
         msg = client.messages.create(
             model="claude-3-haiku-20240307", 
             max_tokens=600,
@@ -344,46 +366,101 @@ def perform_full_audit(url, page_type, country):
     except: pass
 
     axe_data = {"violations": [], "counts": {"critical": 0, "serious": 0}}
+    tab_issues = [] # 👈 Nasza nowa lista na Tab-Analyzer
     shot = ""
     driver = build_driver()
     try:
         driver.get(url)
         time.sleep(5)
         
+        # --- AXE CORE ---
         driver.execute_script(fetch_axe())
         res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
         violations = res.get("violations", [])
         axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
-        if axe_data["counts"]["critical"] > 0:
+        
+        # --- TAB-ANALYZER (Mechanika document.activeElement) ---
+        actions = ActionChains(driver)
+        focused_elements = []
+        
+        for _ in range(30):
+            actions.send_keys(Keys.TAB).perform()
+            
+            elem_data = driver.execute_script("""
+                let el = document.activeElement;
+                if (!el || el === document.body) return null;
+                
+                let rect = el.getBoundingClientRect();
+                let isVisible = (rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden');
+                
+                return {
+                    tag: el.tagName.toLowerCase(),
+                    text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').substring(0, 40).trim(),
+                    visible: isVisible,
+                    href: el.getAttribute('href') || ''
+                };
+            """)
+            
+            if elem_data:
+                focused_elements.append(elem_data)
+                
+                if not elem_data['visible']:
+                    issue_desc = f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}"
+                    if issue_desc not in tab_issues:
+                        tab_issues.append(issue_desc)
+
+        if len(focused_elements) > 5:
+            last_five = [e['tag'] + e['text'] for e in focused_elements[-5:]]
+            if len(set(last_five)) == 1:
+                trap_desc = f"Keyboard Trap detected at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}"
+                if trap_desc not in tab_issues:
+                    tab_issues.append(trap_desc)
+
+        # Robimy screenshota jeśli wystąpił krytyczny błąd Axe LUB błąd klawiatury
+        if axe_data["counts"]["critical"] > 0 or len(tab_issues) > 0:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 driver.save_screenshot(tmp.name)
                 shot = tmp.name
+                
     finally: driver.quit()
 
     wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
     axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
+    tab_penalty = len(tab_issues) * 5 # 👈 Kara punktowa za błędy klawiatury
     
-    final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3), 1)
+    final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty, 1)
+    final = max(0, final)
 
-    return {"Country": country, "Type": page_type, "Score": final, "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], "URL": url, "Screenshot": shot, "Violations": violations}
+    return {
+        "Country": country, 
+        "Type": page_type, 
+        "Score": final, 
+        "Critical": axe_data["counts"]["critical"], 
+        "Serious": axe_data["counts"]["serious"], 
+        "Tab_Issues_Count": len(tab_issues), # 👈 Tab Issues
+        "Tab_Issues_Details": str(tab_issues), # 👈 Tab Issues Details
+        "URL": url, 
+        "Screenshot": shot, 
+        "Violations": violations
+    }
 
 # --- DASHBOARD ---
 def display_results(df):
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5) # 👈 5 kolumn dla nowej metryki
     m1.metric("Average Accessibility Score", f"{df['Score'].mean():.1f}")
     m2.metric("Critical Blockers", int(df["Critical"].sum()))
     m3.metric("Serious Issues", int(df["Serious"].sum()))
-    m4.metric("Markets Audited", len(df["Country"].unique()))
+    m4.metric("Tab Nav Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum())) # 👈 Nowa metryka
+    m5.metric("Markets Audited", len(df["Country"].unique()))
 
     st.subheader("Market Compliance Heatmap")
     pivot = df.pivot_table(index="Country", columns="Type", values="Score")
-    
-    # Naprawione kolory heatmapy (skala 0-100 na sztywno)
     st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
 
     st.subheader("❌ Detailed WCAG Violations (Prioritized)")
     violation_rows = []
     for _, row in df.iterrows():
+        # Axe Violations
         violations = row["Violations"]
         if isinstance(violations, str):
             try: violations = ast.literal_eval(violations)
@@ -399,6 +476,23 @@ def display_results(df):
                 "WCAG URL": wcag_info["url"],
                 "Description": v["help"],
                 "Element Count": len(v.get("nodes", []))
+            })
+            
+        # Tab Issues (Integracja z tabelą)
+        tab_issues = row.get("Tab_Issues_Details", "[]")
+        if isinstance(tab_issues, str):
+            try: tab_issues = ast.literal_eval(tab_issues)
+            except: tab_issues = []
+            
+        for t_issue in tab_issues:
+            violation_rows.append({
+                "Country": row["Country"],
+                "Page": row["Type"].capitalize(),
+                "Impact": "Critical",
+                "WCAG Reference": "SC 2.1.1 / 2.1.2 (Keyboard)",
+                "WCAG URL": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html",
+                "Description": t_issue,
+                "Element Count": 1
             })
     
     if violation_rows:
@@ -435,14 +529,29 @@ def display_results(df):
         if isinstance(violations, str):
             try: violations = ast.literal_eval(violations)
             except: violations = []
-
-        if violations:
-            sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1, "moderate": 2, "minor": 3}.get(x.get("impact"), 4))
             
+        tab_issues = row.get("Tab_Issues_Details", "[]")
+        if isinstance(tab_issues, str):
+            try: tab_issues = ast.literal_eval(tab_issues)
+            except: tab_issues = []
+
+        if violations or tab_issues:
             with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()} (Top Issue)"):
-                top_v = sorted_violations[0] 
-                st.write(f"**Top Issue Detected:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
-                st.markdown(get_ai_recommendation(top_v, row['Type']))
+                # Jeżeli mamy błędy klawiatury, zawsze traktujemy je priorytetowo dla AI
+                if tab_issues:
+                    st.write(f"**Top Issue Detected:** {tab_issues[0]} (Severity: CRITICAL)")
+                    # Pakujemy błąd klawiatury w słownik, aby AI zrozumiało
+                    mock_violation = {
+                        "id": "keyboard-trap-or-focus",
+                        "impact": "critical",
+                        "help": tab_issues[0]
+                    }
+                    st.markdown(get_ai_recommendation(mock_violation, row['Type']))
+                else:
+                    sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1, "moderate": 2, "minor": 3}.get(x.get("impact"), 4))
+                    top_v = sorted_violations[0] 
+                    st.write(f"**Top Issue Detected:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
+                    st.markdown(get_ai_recommendation(top_v, row['Type']))
 
 # --- MAIN ---
 if check_password():
@@ -522,7 +631,7 @@ with st.expander("📊 How We Calculate Accessibility Score"):
         """
         ### Lyreco Accessibility Score (0-100)
 
-        **Algorithm (v8.0):**
+        **Algorithm (v8.1):**
 
         **🔍 Google Lighthouse (40%)**
         - Tests 40+ accessibility rules including ARIA, semantics, and keyboard navigation.
@@ -534,6 +643,11 @@ with st.expander("📊 How We Calculate Accessibility Score"):
         **⚡ Axe-core (30%)**
         - Deep WCAG 2.2 compliance testing.
         - Heavy penalties: Critical violation = -10 points, Serious = -5 points.
+        
+        **⌨️ Keyboard Navigation (Tab-Analyzer) (NEW)**
+        - Physical simulation of keyboard TAB navigation.
+        - Checks for keyboard traps (WCAG 2.1.2) and hidden focus elements (WCAG 2.4.7).
+        - **Penalty: -5 points per navigation issue** from the final score.
 
         **📈 Score Ranges:**
         - 🟢🟢 95-100: Excellent Compliance
