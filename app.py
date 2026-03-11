@@ -345,7 +345,7 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     try:
         # 👈 ZMIANA NA CLAUDE 3.5 SONNET
         msg = client.messages.create(
-            model="claude-3-5-sonnet-20240620", 
+            model="claude-3-5-sonnet-latest", 
             max_tokens=800,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
