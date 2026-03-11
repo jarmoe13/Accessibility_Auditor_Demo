@@ -7,6 +7,7 @@ import time
 import shutil
 import tempfile
 import os
+import base64 # 👈 Nowa biblioteka do kodowania obrazów dla VLM
 from pathlib import Path
 import anthropic
 import ast 
@@ -15,8 +16,8 @@ from fpdf import FPDF
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.keys import Keys # 👈 Nowe do Tab-Analyzera
-from selenium.webdriver.common.action_chains import ActionChains # 👈 Nowe do Tab-Analyzera
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Lyreco Accessibility Monitor", layout="wide")
@@ -90,11 +91,15 @@ COUNTRIES = {
 SSO_LOGIN = "https://welcome.lyreco.com/lyreco-customers/login"
 PAGE_LABELS = {"home": "Home", "category": "Category", "product": "Product", "login": "Login (SSO)"}
 
+# --- IMAGE ENCODING FOR VLM ---
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+
 # --- PDF GENERATOR ---
 class PDFReport(FPDF):
     def header(self):
-        try:
-            pass
+        try: pass
         except: pass
         self.set_font('Arial', 'B', 10)
         self.set_text_color(100, 100, 100)
@@ -138,12 +143,11 @@ def generate_w3c_pdf(df):
     
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 8, f"Date: {datetime.now().strftime('%B %d, %Y')}", 0, 1, 'L')
-    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent (v8.1)", 0, 1, 'L')
+    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent (v8.2 VLM)", 0, 1, 'L')
     pdf.ln(10)
 
     pdf.chapter_title("1. Executive Summary")
     avg_score = df['Score'].mean()
-    
     verdict = "Non-Compliant"
     if avg_score >= 90: verdict = "Excellent Compliance"
     elif avg_score >= 80: verdict = "Good Compliance"
@@ -200,8 +204,6 @@ def generate_w3c_pdf(df):
             pdf.cell(100, 8, "Description", 1, 1, 'C', 1)
             
             pdf.set_font('Arial', '', 8)
-            
-            # Najpierw Tab Issues
             for t_issue in tab_issues:
                 pdf.set_text_color(200, 0, 0)
                 pdf.cell(30, 8, "CRITICAL", 1, 0, 'C')
@@ -210,16 +212,10 @@ def generate_w3c_pdf(df):
                 desc = (t_issue[:55] + '..') if len(t_issue) > 55 else t_issue
                 pdf.cell(100, 8, desc, 1, 1)
                 
-            # Potem Axe Violations
             for v in serious_violations:
                 impact = v.get('impact', 'minor').upper()
-                if impact == 'CRITICAL':
-                    pdf.set_text_color(200, 0, 0)
-                else:
-                    pdf.set_text_color(0)
-                    
+                pdf.set_text_color(200, 0, 0) if impact == 'CRITICAL' else pdf.set_text_color(0)
                 pdf.cell(30, 8, impact, 1, 0, 'C')
-                
                 pdf.set_text_color(0)
                 pdf.cell(60, 8, v['id'], 1, 0)
                 desc = (v['help'][:55] + '..') if len(v['help']) > 55 else v['help']
@@ -242,18 +238,18 @@ def generate_accessibility_statement_pdf(df):
     pdf.ln(5)
 
     pdf.chapter_title("Conformance Status")
-    pdf.chapter_body("The Web Content Accessibility Guidelines (WCAG) defines requirements for designers and developers to improve accessibility for people with disabilities. It defines three levels of conformance: Level A, Level AA, and Level AAA. Based on recent automated audits, the Lyreco e-commerce platform is Partially Conformant with WCAG 2.2 level AA. Partially conformant means that some parts of the content do not fully conform to the accessibility standard.")
+    pdf.chapter_body("The Web Content Accessibility Guidelines (WCAG) defines requirements for designers and developers to improve accessibility for people with disabilities. It defines three levels of conformance: Level A, Level AA, and Level AAA. Based on recent automated audits, the Lyreco e-commerce platform is Partially Conformant with WCAG 2.2 level AA.")
     
     pdf.chapter_title("Assessment Approach")
     pdf.chapter_body("Lyreco assessed the accessibility of the platform by the following approaches:")
     pdf.set_font('Arial', '', 11)
     pdf.cell(0, 6, "- Automated evaluation using Axe-core, WAVE, and Google Lighthouse.", 0, 1)
-    pdf.cell(0, 6, "- AI-driven heuristic analysis based on WCAG 2.2 criteria.", 0, 1)
+    pdf.cell(0, 6, "- AI Vision-Language Model (VLM) heuristic analysis.", 0, 1)
     pdf.cell(0, 6, "- Automated Keyboard Navigation simulation (Tab-Analyzer).", 0, 1)
     pdf.ln(5)
 
     pdf.chapter_title("Identified Limitations")
-    pdf.chapter_body("Despite our best efforts to ensure accessibility of the Lyreco platform, there may be some limitations. Below is a summary of known issues derived from our latest automated audit:")
+    pdf.chapter_body("Below is a summary of known issues derived from our latest automated audit:")
     
     total_critical = int(df['Critical'].sum())
     total_serious = int(df['Serious'].sum())
@@ -264,11 +260,11 @@ def generate_accessibility_statement_pdf(df):
     pdf.set_font('Arial', '', 11)
     pdf.cell(0, 6, f"- Critical Access Blockers: {total_critical}", 0, 1)
     pdf.cell(0, 6, f"- Serious Accessibility Issues: {total_serious}", 0, 1)
-    pdf.cell(0, 6, f"- Keyboard Navigation Barriers: {total_tab}", 0, 1) # 👈 Uwzględnione w deklaracji!
+    pdf.cell(0, 6, f"- Keyboard Navigation Barriers: {total_tab}", 0, 1)
     pdf.ln(5)
     
     pdf.chapter_title("Feedback & Contact")
-    pdf.chapter_body("We welcome your feedback on the accessibility of the Lyreco platform. Please let us know if you encounter accessibility barriers. This statement was generated automatically by the Lyreco Accessibility Agent.")
+    pdf.chapter_body("We welcome your feedback on the accessibility of the Lyreco platform. This statement was generated automatically by the Lyreco Accessibility Agent.")
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -298,41 +294,61 @@ def check_password():
         return False
     return True
 
-# --- AI ADVISOR ---
-def get_ai_recommendation(violation_data, page_context):
+# --- AI ADVISOR (VLM INTEGRATED) ---
+def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     system_prompt = """
-    You are a Senior Accessibility Specialist with IAAP certification (CPACC and WAS) and 12 years of experience.
-    You specialize in inclusive design, WCAG 2.2 AA compliance, and testing with users with disabilities.
-    You bridge the gap between technical standards and real-world barriers faced by users.
+    You are a Senior Accessibility Specialist with IAAP certification (CPACC and WAS).
+    You bridge the gap between technical standards and real-world barriers.
+    If an image is provided, use it to understand the visual context of the element in question (e.g., is the focus visible? is it a modal?).
     """
     
-    prompt = f"""
-    Analyze this WCAG violation found on the Lyreco {page_context} page:
+    # 👈 Budujemy bogatszy kontekst z danymi HTML jeśli są dostępne
+    html_context = violation_data.get('html_context', 'No DOM snippet available.')
+    
+    prompt_text = f"""
+    Analyze this WCAG violation found on the Lyreco {page_context} page.
+    
     Violation ID: {violation_data.get('id', 'unknown')}
     Impact: {violation_data.get('impact', 'unknown')}
-    Description: {violation_data.get('help', '')}
+    Description/Issue: {violation_data.get('help', '')}
     
-    Provide an actionable accessibility remediation plan strictly using this Markdown format. Do not add introductory text.
+    DOM Snapshot (outerHTML):
+    ```html
+    {html_context}
+    ```
+    
+    Provide an actionable accessibility remediation plan strictly using this Markdown format:
     
     ### 👥 Affected User Groups
-    (List which groups are impacted, e.g., screen reader users, keyboard-only users, low vision, and briefly explain why)
-    
     ### 🚀 Quick Wins (< 1 day)
-    (Immediate, simple HTML/CSS or content fixes)
-    
     ### 🔧 Needs Development (1-5 days)
-    (Complex logic, ARIA, or component-level changes needed)
-    
     ### ⚙️ Needs Manual Testing
-    (Specify what MUST be tested manually since automated tools cannot verify it, e.g., focus order, logical alt text)
     """
     
+    # Budowa wiadomości z obrazem LUB bez obrazu
+    message_content = [{"type": "text", "text": prompt_text}]
+    
+    if screenshot_path and os.path.exists(screenshot_path):
+        try:
+            base64_image = encode_image(screenshot_path)
+            message_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64_image,
+                }
+            })
+        except Exception as e:
+            st.warning(f"Failed to attach image to AI context: {e}")
+
     try:
+        # 👈 ZMIANA NA CLAUDE 3.5 SONNET
         msg = client.messages.create(
-            model="claude-3-haiku-20240307", 
-            max_tokens=600,
+            model="claude-3-5-sonnet-20240620", 
+            max_tokens=800,
             system=system_prompt,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": message_content}]
         )
         return msg.content[0].text
     except Exception as e: 
@@ -366,7 +382,7 @@ def perform_full_audit(url, page_type, country):
     except: pass
 
     axe_data = {"violations": [], "counts": {"critical": 0, "serious": 0}}
-    tab_issues = [] # 👈 Nasza nowa lista na Tab-Analyzer
+    tab_issues = []
     shot = ""
     driver = build_driver()
     try:
@@ -379,13 +395,14 @@ def perform_full_audit(url, page_type, country):
         violations = res.get("violations", [])
         axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
         
-        # --- TAB-ANALYZER (Mechanika document.activeElement) ---
+        # --- TAB-ANALYZER (Deep DOM Extraction) ---
         actions = ActionChains(driver)
         focused_elements = []
         
         for _ in range(30):
             actions.send_keys(Keys.TAB).perform()
             
+            # 👈 ZMIANA: Pobieramy outerHTML zamiast tylko tagu
             elem_data = driver.execute_script("""
                 let el = document.activeElement;
                 if (!el || el === document.body) return null;
@@ -395,9 +412,9 @@ def perform_full_audit(url, page_type, country):
                 
                 return {
                     tag: el.tagName.toLowerCase(),
+                    html: el.outerHTML.substring(0, 300), // Pobieramy do 300 znaków kodu HTML
                     text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').substring(0, 40).trim(),
-                    visible: isVisible,
-                    href: el.getAttribute('href') || ''
+                    visible: isVisible
                 };
             """)
             
@@ -405,18 +422,26 @@ def perform_full_audit(url, page_type, country):
                 focused_elements.append(elem_data)
                 
                 if not elem_data['visible']:
-                    issue_desc = f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}"
-                    if issue_desc not in tab_issues:
-                        tab_issues.append(issue_desc)
+                    # Zapisujemy jako słownik, żeby łatwiej przekazać HTML do AI
+                    issue = {
+                        "type": "hidden_focus",
+                        "desc": f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}",
+                        "html_context": elem_data['html']
+                    }
+                    if issue not in tab_issues:
+                        tab_issues.append(issue)
 
         if len(focused_elements) > 5:
             last_five = [e['tag'] + e['text'] for e in focused_elements[-5:]]
             if len(set(last_five)) == 1:
-                trap_desc = f"Keyboard Trap detected at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}"
-                if trap_desc not in tab_issues:
-                    tab_issues.append(trap_desc)
+                trap = {
+                    "type": "keyboard_trap",
+                    "desc": f"Keyboard Trap detected at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}",
+                    "html_context": focused_elements[-1]['html']
+                }
+                if trap not in tab_issues:
+                    tab_issues.append(trap)
 
-        # Robimy screenshota jeśli wystąpił krytyczny błąd Axe LUB błąd klawiatury
         if axe_data["counts"]["critical"] > 0 or len(tab_issues) > 0:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 driver.save_screenshot(tmp.name)
@@ -426,7 +451,7 @@ def perform_full_audit(url, page_type, country):
 
     wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
     axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
-    tab_penalty = len(tab_issues) * 5 # 👈 Kara punktowa za błędy klawiatury
+    tab_penalty = len(tab_issues) * 5
     
     final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty, 1)
     final = max(0, final)
@@ -437,8 +462,8 @@ def perform_full_audit(url, page_type, country):
         "Score": final, 
         "Critical": axe_data["counts"]["critical"], 
         "Serious": axe_data["counts"]["serious"], 
-        "Tab_Issues_Count": len(tab_issues), # 👈 Tab Issues
-        "Tab_Issues_Details": str(tab_issues), # 👈 Tab Issues Details
+        "Tab_Issues_Count": len(tab_issues),
+        "Tab_Issues_Details": str(tab_issues), 
         "URL": url, 
         "Screenshot": shot, 
         "Violations": violations
@@ -446,21 +471,20 @@ def perform_full_audit(url, page_type, country):
 
 # --- DASHBOARD ---
 def display_results(df):
-    m1, m2, m3, m4, m5 = st.columns(5) # 👈 5 kolumn dla nowej metryki
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Average Accessibility Score", f"{df['Score'].mean():.1f}")
     m2.metric("Critical Blockers", int(df["Critical"].sum()))
     m3.metric("Serious Issues", int(df["Serious"].sum()))
-    m4.metric("Tab Nav Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum())) # 👈 Nowa metryka
+    m4.metric("Tab Nav Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum()))
     m5.metric("Markets Audited", len(df["Country"].unique()))
 
     st.subheader("Market Compliance Heatmap")
     pivot = df.pivot_table(index="Country", columns="Type", values="Score")
     st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
 
-    st.subheader("❌ Detailed WCAG Violations (Prioritized)")
+    st.subheader("❌ Detailed WCAG Violations")
     violation_rows = []
     for _, row in df.iterrows():
-        # Axe Violations
         violations = row["Violations"]
         if isinstance(violations, str):
             try: violations = ast.literal_eval(violations)
@@ -475,10 +499,8 @@ def display_results(df):
                 "WCAG Reference": wcag_info["name"],
                 "WCAG URL": wcag_info["url"],
                 "Description": v["help"],
-                "Element Count": len(v.get("nodes", []))
             })
             
-        # Tab Issues (Integracja z tabelą)
         tab_issues = row.get("Tab_Issues_Details", "[]")
         if isinstance(tab_issues, str):
             try: tab_issues = ast.literal_eval(tab_issues)
@@ -489,10 +511,9 @@ def display_results(df):
                 "Country": row["Country"],
                 "Page": row["Type"].capitalize(),
                 "Impact": "Critical",
-                "WCAG Reference": "SC 2.1.1 / 2.1.2 (Keyboard)",
+                "WCAG Reference": "SC 2.1.1 / 2.1.2",
                 "WCAG URL": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html",
-                "Description": t_issue,
-                "Element Count": 1
+                "Description": t_issue.get("desc", str(t_issue)),
             })
     
     if violation_rows:
@@ -500,19 +521,7 @@ def display_results(df):
         impact_order = {"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}
         v_df["sort_idx"] = v_df["Impact"].map(impact_order).fillna(4)
         v_df = v_df.sort_values(by=["sort_idx", "Country"]).drop(columns=["sort_idx"])
-        
-        st.dataframe(
-            v_df, 
-            column_config={
-                "Impact": st.column_config.TextColumn("Impact", help="Severity of the issue"),
-                "WCAG URL": st.column_config.LinkColumn("W3C Documentation", display_text="Open W3C Guideline"),
-                "Element Count": st.column_config.NumberColumn("Occurrences")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.success("No violations found! 🎉")
+        st.dataframe(v_df, column_config={"WCAG URL": st.column_config.LinkColumn("W3C Documentation")}, use_container_width=True, hide_index=True)
 
     crit_df = df[df["Screenshot"] != ""]
     if not crit_df.empty:
@@ -521,8 +530,7 @@ def display_results(df):
         for i, (_, row) in enumerate(crit_df.iterrows()):
             with cols[i % 3]: st.image(row["Screenshot"], caption=f"{row['Country']} - {row['Type'].capitalize()}")
 
-    st.subheader("🧠 AI Accessibility Advisor (Remediation Plan)")
-    st.info("⚠️ **Note:** Automated tools detect ~30-40% of issues (mostly code-based). Areas marked with ⚙️ require manual verification by an auditor.")
+    st.subheader("🧠 AI Accessibility Advisor (Claude 3.5 Sonnet Vision)")
     
     for _, row in df.iterrows():
         violations = row["Violations"]
@@ -537,21 +545,34 @@ def display_results(df):
 
         if violations or tab_issues:
             with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()} (Top Issue)"):
-                # Jeżeli mamy błędy klawiatury, zawsze traktujemy je priorytetowo dla AI
+                screenshot_to_send = row.get("Screenshot") if row.get("Screenshot") != "" else None
+                
                 if tab_issues:
-                    st.write(f"**Top Issue Detected:** {tab_issues[0]} (Severity: CRITICAL)")
-                    # Pakujemy błąd klawiatury w słownik, aby AI zrozumiało
+                    issue = tab_issues[0]
+                    st.write(f"**Top Issue:** {issue.get('desc')} (Severity: CRITICAL)")
+                    st.code(issue.get('html_context', ''), language="html")
+                    
                     mock_violation = {
                         "id": "keyboard-trap-or-focus",
                         "impact": "critical",
-                        "help": tab_issues[0]
+                        "help": issue.get('desc'),
+                        "html_context": issue.get('html_context')
                     }
-                    st.markdown(get_ai_recommendation(mock_violation, row['Type']))
+                    # 👈 Przekazujemy ścieżkę do obrazu do modelu VLM
+                    st.markdown(get_ai_recommendation(mock_violation, row['Type'], screenshot_to_send))
                 else:
-                    sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1, "moderate": 2, "minor": 3}.get(x.get("impact"), 4))
+                    sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1}.get(x.get("impact"), 4))
                     top_v = sorted_violations[0] 
-                    st.write(f"**Top Issue Detected:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
-                    st.markdown(get_ai_recommendation(top_v, row['Type']))
+                    st.write(f"**Top Issue:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
+                    
+                    # Ekstrakcja HTML z błędów Axe (jeśli dostępne)
+                    html_snippet = top_v.get("nodes", [{}])[0].get("html", "No DOM snippet available.")
+                    top_v["html_context"] = html_snippet
+                    if html_snippet != "No DOM snippet available.":
+                        st.code(html_snippet, language="html")
+                        
+                    # 👈 Przekazujemy ścieżkę do obrazu do modelu VLM
+                    st.markdown(get_ai_recommendation(top_v, row['Type'], screenshot_to_send))
 
 # --- MAIN ---
 if check_password():
@@ -561,39 +582,16 @@ if check_password():
         
         if "last_res" in st.session_state:
             st.divider()
-            
             csv = st.session_state["last_res"].to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Data (CSV)",
-                data=csv,
-                file_name=f"lyreco_audit_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime='text/csv',
-                use_container_width=True
-            )
-            
+            st.download_button("📥 Download Data (CSV)", data=csv, file_name="lyreco_audit.csv", mime='text/csv', use_container_width=True)
             try:
-                report_pdf_bytes = generate_w3c_pdf(st.session_state["last_res"])
-                st.download_button(
-                    label="📄 Download Audit Report (PDF)",
-                    data=report_pdf_bytes,
-                    file_name=f"Lyreco_Audit_Report_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime='application/pdf',
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Report PDF Gen Error: {e}")
-
+                report_pdf = generate_w3c_pdf(st.session_state["last_res"])
+                st.download_button("📄 Download Audit Report (PDF)", data=report_pdf, file_name="Lyreco_Audit_Report.pdf", mime='application/pdf', use_container_width=True)
+            except: pass
             try:
-                statement_pdf_bytes = generate_accessibility_statement_pdf(st.session_state["last_res"])
-                st.download_button(
-                    label="📜 Download Accessibility Statement",
-                    data=statement_pdf_bytes,
-                    file_name=f"Lyreco_Accessibility_Statement_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime='application/pdf',
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Statement PDF Gen Error: {e}")
+                stmt_pdf = generate_accessibility_statement_pdf(st.session_state["last_res"])
+                st.download_button("📜 Download Access Statement", data=stmt_pdf, file_name="Lyreco_Statement.pdf", mime='application/pdf', use_container_width=True)
+            except: pass
             
         if st.button("Logout", use_container_width=True):
             st.session_state["logged_in"] = False
@@ -605,7 +603,7 @@ if check_password():
         c1, c2 = st.columns(2)
         options = list(COUNTRIES.keys()) if st.session_state["role"] == "admin" else ["France"]
         sel_countries = c1.multiselect("Select Markets", options, default=options)
-        sel_types = c2.multiselect("Select Pages", ["home", "category", "product", "login"], default=["home", "product"])
+        sel_types = c2.multiselect("Select Pages", ["home", "category", "product"], default=["home"])
 
         if st.button("Run Audit", type="primary"):
             results = []
@@ -625,39 +623,3 @@ if check_password():
             df = pd.read_csv(up)
             st.session_state["last_res"] = df
             display_results(df)
-
-with st.expander("📊 How We Calculate Accessibility Score"):
-    st.markdown(
-        """
-        ### Lyreco Accessibility Score (0-100)
-
-        **Algorithm (v8.1):**
-
-        **🔍 Google Lighthouse (40%)**
-        - Tests 40+ accessibility rules including ARIA, semantics, and keyboard navigation.
-
-        **🌊 WAVE by WebAIM (30%)**
-        - Detects critical errors (missing alt text, broken forms) and color contrast failures.
-        - Penalties: 1.2 points per error, 0.5 per contrast issue.
-
-        **⚡ Axe-core (30%)**
-        - Deep WCAG 2.2 compliance testing.
-        - Heavy penalties: Critical violation = -10 points, Serious = -5 points.
-        
-        **⌨️ Keyboard Navigation (Tab-Analyzer) (NEW)**
-        - Physical simulation of keyboard TAB navigation.
-        - Checks for keyboard traps (WCAG 2.1.2) and hidden focus elements (WCAG 2.4.7).
-        - **Penalty: -5 points per navigation issue** from the final score.
-
-        **📈 Score Ranges:**
-        - 🟢🟢 95-100: Excellent Compliance
-        - 🟢 90-95: Good Compliance
-        - 🟡🟢 80-90: Fair Compliance
-        - 🟡 60-80: Needs Improvement
-        - 🔴 <60: Critical Access Blockers Found
-
-        ⚠️ *Automated tools catch ~30-40% of issues. Manual testing is required for full WCAG compliance.*
-        """
-    )
-
-st.divider()
