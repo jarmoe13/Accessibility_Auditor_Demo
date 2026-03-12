@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import os
 import base64
+import json
 from pathlib import Path
 import anthropic
 import ast 
@@ -89,9 +90,8 @@ COUNTRIES = {
     }
 }
 SSO_LOGIN = "https://welcome.lyreco.com/lyreco-customers/login"
-PAGE_LABELS = {"home": "Home", "category": "Category", "product": "Product", "login": "Login (SSO)"}
 
-# --- IMAGE ENCODING FOR VLM ---
+# --- IMAGE ENCODING ---
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
@@ -143,7 +143,7 @@ def generate_w3c_pdf(df):
     
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 8, f"Date: {datetime.now().strftime('%B %d, %Y')}", 0, 1, 'L')
-    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent (v8.2 VLM)", 0, 1, 'L')
+    pdf.cell(0, 8, f"Auditor: Lyreco Automated Agent", 0, 1, 'L')
     pdf.ln(10)
 
     pdf.chapter_title("1. Executive Summary")
@@ -156,9 +156,9 @@ def generate_w3c_pdf(df):
     tab_sum = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
     
     summary_text = (
-        f"This report presents the results of an automated accessibility evaluation of the Lyreco e-commerce platform across selected markets. "
-        f"The overall accessibility score is {avg_score:.1f}/100, categorized as '{verdict}'. "
-        f"The evaluation highlights {int(df['Critical'].sum())} critical blockers, {int(df['Serious'].sum())} serious issues, and {tab_sum} keyboard navigation barriers that require immediate attention to meet WCAG 2.2 AA standards."
+        f"This report presents the results of an automated accessibility evaluation of the Lyreco e-commerce platform. "
+        f"The overall score is {avg_score:.1f}/100 ('{verdict}'). "
+        f"Found {int(df['Critical'].sum())} critical blockers, {int(df['Serious'].sum())} serious issues, and {tab_sum} keyboard navigation barriers."
     )
     pdf.chapter_body(summary_text)
 
@@ -238,37 +238,30 @@ def generate_accessibility_statement_pdf(df):
     pdf.ln(5)
 
     pdf.chapter_title("Conformance Status")
-    pdf.chapter_body("The Web Content Accessibility Guidelines (WCAG) defines requirements for designers and developers to improve accessibility for people with disabilities. It defines three levels of conformance: Level A, Level AA, and Level AAA. Based on recent automated audits, the Lyreco e-commerce platform is Partially Conformant with WCAG 2.2 level AA.")
+    pdf.chapter_body("The Web Content Accessibility Guidelines (WCAG) defines requirements for designers and developers to improve accessibility for people with disabilities. Based on automated audits, the platform is Partially Conformant with WCAG 2.2 level AA.")
     
     pdf.chapter_title("Assessment Approach")
-    pdf.chapter_body("Lyreco assessed the accessibility of the platform by the following approaches:")
-    pdf.set_font('Arial', '', 11)
-    pdf.cell(0, 6, "- Automated evaluation using Axe-core, WAVE, and Google Lighthouse.", 0, 1)
-    pdf.cell(0, 6, "- AI Vision-Language Model (VLM) heuristic analysis.", 0, 1)
-    pdf.cell(0, 6, "- Automated Keyboard Navigation simulation (Tab-Analyzer).", 0, 1)
+    pdf.chapter_body("Lyreco assessed the accessibility by the following approaches:")
+    pdf.cell(0, 6, "- Automated evaluation (Axe, WAVE, Lighthouse).", 0, 1)
+    pdf.cell(0, 6, "- AI Vision-Language Model heuristic analysis.", 0, 1)
+    pdf.cell(0, 6, "- Automated Keyboard Navigation simulation.", 0, 1)
     pdf.ln(5)
 
     pdf.chapter_title("Identified Limitations")
-    pdf.chapter_body("Below is a summary of known issues derived from our latest automated audit:")
-    
     total_critical = int(df['Critical'].sum())
     total_serious = int(df['Serious'].sum())
     total_tab = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
     
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 6, f"Current Audit Metrics (Date: {datetime.now().strftime('%Y-%m-%d')}):", 0, 1)
+    pdf.cell(0, 6, f"Metrics (Date: {datetime.now().strftime('%Y-%m-%d')}):", 0, 1)
     pdf.set_font('Arial', '', 11)
     pdf.cell(0, 6, f"- Critical Access Blockers: {total_critical}", 0, 1)
     pdf.cell(0, 6, f"- Serious Accessibility Issues: {total_serious}", 0, 1)
     pdf.cell(0, 6, f"- Keyboard Navigation Barriers: {total_tab}", 0, 1)
-    pdf.ln(5)
-    
-    pdf.chapter_title("Feedback & Contact")
-    pdf.chapter_body("We welcome your feedback on the accessibility of the Lyreco platform. This statement was generated automatically by the Lyreco Accessibility Agent.")
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# --- AUTHENTICATION SYSTEM ---
+# --- AUTHENTICATION ---
 def check_password():
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
@@ -294,30 +287,25 @@ def check_password():
         return False
     return True
 
-# --- AI ADVISOR (VLM INTEGRATED) ---
+# --- AI FUNCTIONS ---
 def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     system_prompt = """
-    You are a Senior Accessibility Specialist with IAAP certification (CPACC and WAS).
-    You bridge the gap between technical standards and real-world barriers.
-    If an image is provided, use it to understand the visual context of the element in question (e.g., is the focus visible? is it a modal?).
+    You are a Senior Accessibility Specialist with IAAP certification.
+    If an image is provided, use it to understand the visual context of the element in question.
     """
-    
     html_context = violation_data.get('html_context', 'No DOM snippet available.')
-    
     prompt_text = f"""
     Analyze this WCAG violation found on the Lyreco {page_context} page.
-    
-    Violation ID: {violation_data.get('id', 'unknown')}
+    ID: {violation_data.get('id', 'unknown')}
     Impact: {violation_data.get('impact', 'unknown')}
-    Description/Issue: {violation_data.get('help', '')}
+    Issue: {violation_data.get('help', '')}
     
-    DOM Snapshot (outerHTML):
+    DOM:
     ```html
     {html_context}
     ```
     
-    Provide an actionable accessibility remediation plan strictly using this Markdown format:
-    
+    Provide remediation plan strictly using Markdown:
     ### 👥 Affected User Groups
     ### 🚀 Quick Wins (< 1 day)
     ### 🔧 Needs Development (1-5 days)
@@ -325,23 +313,12 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     """
     
     message_content = [{"type": "text", "text": prompt_text}]
-    
     if screenshot_path and os.path.exists(screenshot_path):
         try:
-            base64_image = encode_image(screenshot_path)
-            message_content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": base64_image,
-                }
-            })
-        except Exception as e:
-            st.warning(f"Failed to attach image to AI context: {e}")
+            message_content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encode_image(screenshot_path)}})
+        except Exception: pass
 
     try:
-        # 👈 Najnowszy i najpotężniejszy model Claude 3.5 Sonnet
         msg = client.messages.create(
             model="claude-3-5-sonnet-20241022", 
             max_tokens=800,
@@ -350,9 +327,53 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
         )
         return msg.content[0].text
     except Exception as e: 
-        return f"AI Advisor is currently unavailable. Error: {str(e)}"
+        return f"AI Advisor error: {str(e)}"
 
-# --- AUDIT FUNCTIONS ---
+def run_guided_heuristics(screenshot_path, page_type):
+    system_prompt = """
+    You are an expert WCAG 2.2 Auditor performing a visual heuristic evaluation of a webpage screenshot.
+    You must evaluate visible elements (images, contrast, layout logic).
+    
+    CRITICAL INSTRUCTION:
+    You are confident, but you MUST NOT auto-resolve everything. You MUST explicitly flag exactly 1 or 2 items as "NEEDS_HUMAN". 
+    Choose ambiguous items for manual review.
+    
+    Return ONLY a valid JSON array of objects with this structure (no markdown blocks, just raw JSON):
+    [
+      {
+        "element": "Describe the element",
+        "issue_type": "Image Alt / Contrast / Logical Layout",
+        "ai_judgment": "PASS" | "FAIL" | "NEEDS_HUMAN",
+        "reasoning": "Brief explanation."
+      }
+    ]
+    """
+    
+    try:
+        base64_image = encode_image(screenshot_path)
+        message_content = [
+            {"type": "text", "text": f"Perform heuristic visual analysis for this {page_type} page."},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64_image}}
+        ]
+        
+        msg = client.messages.create(
+            model="claude-sonnet-4-6", # Model wskazany przez użytkownika
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": message_content}]
+        )
+        
+        response_text = msg.content[0].text.strip()
+        if response_text.startswith("```json"):
+            response_text = response_text[7:-3].strip()
+        elif response_text.startswith("```"):
+            response_text = response_text[3:-3].strip()
+            
+        return json.loads(response_text)
+    except Exception as e:
+        return [{"element": "System API", "issue_type": "Error", "ai_judgment": "FAIL", "reasoning": str(e)}]
+
+# --- SELENIUM & AUDIT FUNCTIONS ---
 def build_driver():
     opts = Options()
     opts.add_argument("--headless")
@@ -365,7 +386,6 @@ def build_driver():
 def fetch_axe():
     return requests.get("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.7.2/axe.min.js").text
 
-# 👈 ZMIANA: Dodany parametr bypass_cookies do logiki audytu
 def perform_full_audit(url, page_type, country, bypass_cookies=False):
     lh = 0
     try:
@@ -388,7 +408,6 @@ def perform_full_audit(url, page_type, country, bypass_cookies=False):
         driver.get(url)
         time.sleep(5)
         
-        # 👈 ZMIANA: Omijanie banera cookies jeśli użytkownik to zaznaczy
         if bypass_cookies:
             driver.execute_script("""
                 let uc = document.getElementById('usercentrics-root');
@@ -396,58 +415,41 @@ def perform_full_audit(url, page_type, country, bypass_cookies=False):
                 document.body.style.overflow = 'auto';
                 document.body.style.position = 'static';
             """)
-            time.sleep(2) # Czas na przerysowanie strony bez banera
+            time.sleep(2)
         
-        # --- AXE CORE ---
         driver.execute_script(fetch_axe())
         res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
         violations = res.get("violations", [])
         axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
         
-        # --- TAB-ANALYZER ---
         actions = ActionChains(driver)
         focused_elements = []
         
         for _ in range(30):
             actions.send_keys(Keys.TAB).perform()
-            
             elem_data = driver.execute_script("""
                 let el = document.activeElement;
                 if (!el || el === document.body) return null;
-                
                 let rect = el.getBoundingClientRect();
-                let isVisible = (rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden');
-                
                 return {
                     tag: el.tagName.toLowerCase(),
                     html: el.outerHTML.substring(0, 300),
-                    text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').substring(0, 40).trim(),
-                    visible: isVisible
+                    text: (el.innerText || el.getAttribute('aria-label') || '').substring(0, 40).trim(),
+                    visible: (rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden')
                 };
             """)
             
             if elem_data:
                 focused_elements.append(elem_data)
-                
                 if not elem_data['visible']:
-                    issue = {
-                        "type": "hidden_focus",
-                        "desc": f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}",
-                        "html_context": elem_data['html']
-                    }
-                    if issue not in tab_issues:
-                        tab_issues.append(issue)
+                    issue = {"type": "hidden_focus", "desc": f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}", "html_context": elem_data['html']}
+                    if issue not in tab_issues: tab_issues.append(issue)
 
         if len(focused_elements) > 5:
             last_five = [e['tag'] + e['text'] for e in focused_elements[-5:]]
             if len(set(last_five)) == 1:
-                trap = {
-                    "type": "keyboard_trap",
-                    "desc": f"Keyboard Trap detected at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}",
-                    "html_context": focused_elements[-1]['html']
-                }
-                if trap not in tab_issues:
-                    tab_issues.append(trap)
+                trap = {"type": "keyboard_trap", "desc": f"Keyboard Trap at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}", "html_context": focused_elements[-1]['html']}
+                if trap not in tab_issues: tab_issues.append(trap)
 
         if axe_data["counts"]["critical"] > 0 or len(tab_issues) > 0:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -459,180 +461,241 @@ def perform_full_audit(url, page_type, country, bypass_cookies=False):
     wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
     axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
     tab_penalty = len(tab_issues) * 5
-    
-    final = round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty, 1)
-    final = max(0, final)
+    final = max(0, round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty, 1))
 
     return {
-        "Country": country, 
-        "Type": page_type, 
-        "Score": final, 
-        "Critical": axe_data["counts"]["critical"], 
-        "Serious": axe_data["counts"]["serious"], 
-        "Tab_Issues_Count": len(tab_issues),
-        "Tab_Issues_Details": str(tab_issues), 
-        "URL": url, 
-        "Screenshot": shot, 
-        "Violations": violations
+        "Country": country, "Type": page_type, "Score": final, 
+        "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], 
+        "Tab_Issues_Count": len(tab_issues), "Tab_Issues_Details": str(tab_issues), 
+        "URL": url, "Screenshot": shot, "Violations": violations
     }
 
-# --- DASHBOARD ---
+def run_widget_crash_test(url):
+    driver = build_driver()
+    report = {"url": url, "detected": False, "esc_works": False, "ghost_elements": False, "issues": []}
+
+    try:
+        driver.get(url)
+        driver.delete_all_cookies()
+        driver.refresh()
+        time.sleep(4)
+        
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
+        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        try: ActionChains(driver).move_by_offset(1, 1).perform() 
+        except: pass
+        time.sleep(3)
+        
+        detected = driver.execute_script("""
+            let scripts = Array.from(document.scripts).some(s => s.src.includes('getsitecontrol') || s.src.includes('usercentrics'));
+            let containers = document.querySelectorAll('[id^="gsc-"], [class*="gsc-"], #usercentrics-root, [role="dialog"]');
+            let anyOverlay = Array.from(document.body.children).some(el => {
+                let style = window.getComputedStyle(el);
+                return parseInt(style.zIndex) > 100 && style.display !== 'none' && style.visibility !== 'hidden';
+            });
+            return scripts || containers.length > 0 || anyOverlay;
+        """)
+        
+        if not detected: return report
+        report["detected"] = True
+        
+        ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(2) 
+        
+        test_results = driver.execute_script("""
+            let issues = []; let esc_worked = true; let ghosts = false;
+            let widgets = document.querySelectorAll('[id^="gsc-"], [class*="gsc-"], #usercentrics-root, [role="dialog"]');
+            
+            widgets.forEach(w => {
+                let rect = w.getBoundingClientRect();
+                let isVisible = (rect.width > 0 && rect.height > 0 && window.getComputedStyle(w).visibility !== 'hidden' && window.getComputedStyle(w).opacity > '0');
+                
+                if (isVisible) {
+                    esc_worked = false;
+                    issues.push("CRITICAL: Widget ignores the 'Escape' key (Focus Trap).");
+                } else {
+                    let style = window.getComputedStyle(w);
+                    if ((w.tabIndex >= 0 || w.tagName === 'DIV') && w.getAttribute('aria-hidden') !== 'true' && style.display !== 'none') {
+                        let focusables = w.querySelectorAll('a, button, input, [tabindex="0"]');
+                        if (focusables.length > 0 || w.tabIndex >= 0) {
+                            ghosts = true; issues.push("CRITICAL: Widget creates an invisible 'Ghost' trapping focus.");
+                        }
+                    }
+                }
+            });
+            if (window.getComputedStyle(document.body).overflow === 'hidden') issues.push("CRITICAL: Widget locked page scroll.");
+            return {esc: esc_worked, ghosts: ghosts, issues: issues};
+        """)
+        
+        report["esc_works"] = test_results["esc"]
+        report["ghost_elements"] = test_results["ghosts"]
+        report["issues"] = test_results["issues"]
+    except Exception as e: report["issues"].append(f"System error: {str(e)}")
+    finally: driver.quit()
+    return report
+
+# --- DASHBOARD UI ---
 def display_results(df):
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Average Accessibility Score", f"{df['Score'].mean():.1f}")
-    m2.metric("Critical Blockers", int(df["Critical"].sum()))
-    m3.metric("Serious Issues", int(df["Serious"].sum()))
-    m4.metric("Tab Nav Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum()))
-    m5.metric("Markets Audited", len(df["Country"].unique()))
+    m1.metric("Avg Score", f"{df['Score'].mean():.1f}")
+    m2.metric("Critical", int(df["Critical"].sum()))
+    m3.metric("Serious", int(df["Serious"].sum()))
+    m4.metric("Tab Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum()))
+    m5.metric("Markets", len(df["Country"].unique()))
 
     st.subheader("Market Compliance Heatmap")
-    pivot = df.pivot_table(index="Country", columns="Type", values="Score")
-    st.dataframe(pivot.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
+    st.dataframe(df.pivot_table(index="Country", columns="Type", values="Score").style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
 
-    st.subheader("❌ Detailed WCAG Violations")
-    violation_rows = []
+    st.subheader("❌ Detailed Violations")
+    v_rows = []
     for _, row in df.iterrows():
         violations = row["Violations"]
         if isinstance(violations, str):
             try: violations = ast.literal_eval(violations)
             except: violations = []
-            
         for v in violations:
-            wcag_info = AXE_TO_WCAG.get(v["id"], {"name": "General Accessibility", "url": "https://www.w3.org/WAI/WCAG22/quickref/"})
-            violation_rows.append({
-                "Country": row["Country"],
-                "Page": row["Type"].capitalize(),
-                "Impact": v.get("impact", "minor").capitalize(),
-                "WCAG Reference": wcag_info["name"],
-                "WCAG URL": wcag_info["url"],
-                "Description": v["help"],
-            })
+            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Impact": v.get("impact", "minor").capitalize(), "Description": v["help"]})
             
         tab_issues = row.get("Tab_Issues_Details", "[]")
         if isinstance(tab_issues, str):
             try: tab_issues = ast.literal_eval(tab_issues)
             except: tab_issues = []
-            
         for t_issue in tab_issues:
-            violation_rows.append({
-                "Country": row["Country"],
-                "Page": row["Type"].capitalize(),
-                "Impact": "Critical",
-                "WCAG Reference": "SC 2.1.1 / 2.1.2",
-                "WCAG URL": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html",
-                "Description": t_issue.get("desc", str(t_issue)),
-            })
+            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Impact": "Critical", "Description": t_issue.get("desc", str(t_issue))})
     
-    if violation_rows:
-        v_df = pd.DataFrame(violation_rows)
-        impact_order = {"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}
-        v_df["sort_idx"] = v_df["Impact"].map(impact_order).fillna(4)
-        v_df = v_df.sort_values(by=["sort_idx", "Country"]).drop(columns=["sort_idx"])
-        st.dataframe(v_df, column_config={"WCAG URL": st.column_config.LinkColumn("W3C Documentation")}, use_container_width=True, hide_index=True)
+    if v_rows:
+        v_df = pd.DataFrame(v_rows)
+        v_df["sort_idx"] = v_df["Impact"].map({"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}).fillna(4)
+        st.dataframe(v_df.sort_values(by=["sort_idx", "Country"]).drop(columns=["sort_idx"]), use_container_width=True, hide_index=True)
 
-    crit_df = df[df["Screenshot"] != ""]
-    if not crit_df.empty:
-        st.subheader("🖼️ Visual Proof (Critical Issues)")
-        cols = st.columns(3)
-        for i, (_, row) in enumerate(crit_df.iterrows()):
-            with cols[i % 3]: st.image(row["Screenshot"], caption=f"{row['Country']} - {row['Type'].capitalize()}")
-
-    st.subheader("🧠 AI Accessibility Advisor (Claude 3.5 Sonnet Vision)")
-    
+    st.subheader("🧠 AI Accessibility Advisor (Claude 3.5 Sonnet)")
     for _, row in df.iterrows():
-        violations = row["Violations"]
-        if isinstance(violations, str):
-            try: violations = ast.literal_eval(violations)
-            except: violations = []
-            
-        tab_issues = row.get("Tab_Issues_Details", "[]")
-        if isinstance(tab_issues, str):
-            try: tab_issues = ast.literal_eval(tab_issues)
-            except: tab_issues = []
+        violations = ast.literal_eval(row["Violations"]) if isinstance(row["Violations"], str) else row["Violations"]
+        tab_issues = ast.literal_eval(row.get("Tab_Issues_Details", "[]")) if isinstance(row.get("Tab_Issues_Details"), str) else row.get("Tab_Issues_Details", [])
 
         if violations or tab_issues:
-            with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()} (Top Issue)"):
-                screenshot_to_send = row.get("Screenshot") if row.get("Screenshot") != "" else None
-                
+            with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()}"):
+                shot = row.get("Screenshot") if row.get("Screenshot") != "" else None
                 if tab_issues:
                     issue = tab_issues[0]
-                    st.write(f"**Top Issue:** {issue.get('desc')} (Severity: CRITICAL)")
+                    st.write(f"**Issue:** {issue.get('desc')}")
                     st.code(issue.get('html_context', ''), language="html")
-                    
-                    mock_violation = {
-                        "id": "keyboard-trap-or-focus",
-                        "impact": "critical",
-                        "help": issue.get('desc'),
-                        "html_context": issue.get('html_context')
-                    }
-                    st.markdown(get_ai_recommendation(mock_violation, row['Type'], screenshot_to_send))
+                    st.markdown(get_ai_recommendation({"id": "keyboard-trap", "impact": "critical", "help": issue.get('desc'), "html_context": issue.get('html_context')}, row['Type'], shot))
                 else:
-                    sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1}.get(x.get("impact"), 4))
-                    top_v = sorted_violations[0] 
-                    st.write(f"**Top Issue:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
-                    
-                    html_snippet = top_v.get("nodes", [{}])[0].get("html", "No DOM snippet available.")
-                    top_v["html_context"] = html_snippet
-                    if html_snippet != "No DOM snippet available.":
-                        st.code(html_snippet, language="html")
-                        
-                    st.markdown(get_ai_recommendation(top_v, row['Type'], screenshot_to_send))
+                    top_v = sorted(violations, key=lambda x: {"critical": 0, "serious": 1}.get(x.get("impact"), 4))[0] 
+                    st.write(f"**Issue:** {top_v['help']}")
+                    top_v["html_context"] = top_v.get("nodes", [{}])[0].get("html", "")
+                    st.code(top_v["html_context"], language="html")
+                    st.markdown(get_ai_recommendation(top_v, row['Type'], shot))
 
 # --- MAIN ---
 if check_password():
     with st.sidebar:
         st.image("https://cdn-s1.lyreco.com/staticswebshop/pictures/looknfeel/FRFR/logo.svg", width=180)
-        st.write(f"Logged as: **{st.session_state['role'].upper()}**")
+        st.write(f"Role: **{st.session_state['role'].upper()}**")
         
         if "last_res" in st.session_state:
             st.divider()
-            csv = st.session_state["last_res"].to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Data (CSV)", data=csv, file_name="lyreco_audit.csv", mime='text/csv', use_container_width=True)
-            try:
-                report_pdf = generate_w3c_pdf(st.session_state["last_res"])
-                st.download_button("📄 Download Audit Report (PDF)", data=report_pdf, file_name="Lyreco_Audit_Report.pdf", mime='application/pdf', use_container_width=True)
+            st.download_button("📥 CSV", data=st.session_state["last_res"].to_csv(index=False).encode('utf-8'), file_name="audit.csv", use_container_width=True)
+            try: st.download_button("📄 PDF Report", data=generate_w3c_pdf(st.session_state["last_res"]), file_name="Report.pdf", use_container_width=True)
             except: pass
-            try:
-                stmt_pdf = generate_accessibility_statement_pdf(st.session_state["last_res"])
-                st.download_button("📜 Download Access Statement", data=stmt_pdf, file_name="Lyreco_Statement.pdf", mime='application/pdf', use_container_width=True)
+            try: st.download_button("📜 Statement", data=generate_accessibility_statement_pdf(st.session_state["last_res"]), file_name="Statement.pdf", use_container_width=True)
             except: pass
             
         if st.button("Logout", use_container_width=True):
             st.session_state["logged_in"] = False
             st.rerun()
       
-    tab1, tab2 = st.tabs(["🚀 New Audit", "📂 History"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🚀 New Audit", "📂 History", "🎯 Widget Crash-Tester", "🧑‍💻 Guided Testing"])
     
     with tab1:
         c1, c2 = st.columns(2)
-        options = list(COUNTRIES.keys()) if st.session_state["role"] == "admin" else ["France"]
-        sel_countries = c1.multiselect("Select Markets", options, default=options)
-        sel_types = c2.multiselect("Select Pages", ["home", "category", "product"], default=["home"])
+        opts = list(COUNTRIES.keys()) if st.session_state["role"] == "admin" else ["France"]
+        sel_c = c1.multiselect("Markets", opts, default=opts)
+        sel_t = c2.multiselect("Pages", ["home", "category", "product"], default=["home"])
 
-        # 👈 ZMIANA: Checkbox do omijania banera
-        st.write("### ⚙️ Advanced Auditor Settings")
-        bypass_cookies = st.checkbox(
-            "🪄 Bypass Cookie Banner (Remove Usercentrics overlay)", 
-            value=True, 
-            help="Check this to remove the cookie banner and audit the underlying page content. Uncheck to audit the banner itself."
-        )
+        bypass = st.checkbox("🪄 Bypass Cookie Banner", value=True)
 
         if st.button("Run Audit", type="primary"):
-            results = []
-            for c in sel_countries:
-                for t in sel_types:
-                    st.write(f"Auditing {c} - {t.capitalize()}...")
-                    # 👈 ZMIANA: Przekazywanie bypass_cookies do logiki
-                    results.append(perform_full_audit(COUNTRIES[c].get(t, SSO_LOGIN), t, c, bypass_cookies))
-            st.session_state["last_res"] = pd.DataFrame(results)
+            res = [perform_full_audit(COUNTRIES[c].get(t, SSO_LOGIN), t, c, bypass) for c in sel_c for t in sel_t]
+            st.session_state["last_res"] = pd.DataFrame(res)
             st.rerun()
 
-        if "last_res" in st.session_state:
-            display_results(st.session_state["last_res"])
+        if "last_res" in st.session_state: display_results(st.session_state["last_res"])
 
     with tab2:
-        up = st.file_uploader("Upload Previous Audit CSV")
+        up = st.file_uploader("Upload CSV")
         if up: 
             df = pd.read_csv(up)
             st.session_state["last_res"] = df
             display_results(df)
+
+    with tab3:
+        st.header("🎯 Widget Crash-Tester")
+        t_url = st.text_input("URL to test:", "https://shop.lyreco.fr/fr")
+        if st.button("🔍 Run Widget Test", type="primary"):
+            with st.spinner("Provoking widgets..."):
+                res = run_widget_crash_test(t_url)
+                if not res["detected"]: st.warning("📭 No active widgets detected.")
+                else:
+                    st.success("🎯 Widgets detected!")
+                    c1, c2 = st.columns(2)
+                    if res["esc_works"]: c1.success("✅ Closes on ESC")
+                    else: c1.error("❌ Fails ESC test")
+                    if not res["ghost_elements"]: c2.success("✅ Clean DOM")
+                    else: c2.error("❌ Leaves Ghosts")
+                    for i in res["issues"]: st.error(i)
+
+    # --- NOWA ZAKŁADKA: GUIDED TESTING ---
+    with tab4:
+        st.header("🧑‍💻 AI + Human Guided Testing")
+        st.write("Sztuczna inteligencja (Claude) ocenia wizualne aspekty strony. Tam, gdzie kontekst jest niejednoznaczny, prosi Cię o ostateczny werdykt audytora.")
+        
+        gt_url = st.text_input("Adres URL do weryfikacji manualnej:", "https://shop.lyreco.fr/fr", key="gt_url")
+        
+        if st.button("Uruchom analizę hybrydową", type="primary", key="btn_gt"):
+            with st.spinner("Pobieram zrzut ekranu i analizuję wizualnie (Model: claude-sonnet-4-6)..."):
+                driver = build_driver()
+                gt_shot = ""
+                try:
+                    driver.get(gt_url)
+                    time.sleep(5)
+                    driver.execute_script("let uc = document.getElementById('usercentrics-root'); if(uc) uc.remove();")
+                    time.sleep(1)
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        driver.save_screenshot(tmp.name)
+                        gt_shot = tmp.name
+                finally:
+                    driver.quit()
+                
+                st.image(gt_shot, caption="Analizowany widok (Bypass Cookies włączony)", use_container_width=True)
+                
+                evaluations = run_guided_heuristics(gt_shot, "ecommerce")
+                
+                st.subheader("📋 Karta weryfikacyjna")
+                
+                if isinstance(evaluations, list):
+                    for i, item in enumerate(evaluations):
+                        with st.container():
+                            st.markdown(f"**Element:** {item.get('element')} | **Typ:** {item.get('issue_type')}")
+                            judgment = item.get('ai_judgment')
+                            
+                            if judgment == "PASS":
+                                st.success(f"🤖 AI: ZATWIERDZONE - {item.get('reasoning')}")
+                            elif judgment == "FAIL":
+                                st.error(f"🤖 AI: ODRZUCONE (Błąd) - {item.get('reasoning')}")
+                            elif judgment == "NEEDS_HUMAN":
+                                st.warning(f"🤔 AI ma wątpliwości: {item.get('reasoning')}")
+                                st.radio(
+                                    "Twoja decyzja audytorska dla tego elementu:", 
+                                    ["Pass (Zgodne)", "Fail (Niezgodne)"], 
+                                    key=f"human_eval_{i}"
+                                )
+                            st.divider()
+                    
+                    st.button("💾 Zapisz ostateczny werdykt do raportu")
+                else:
+                    st.error("Błąd parsowania JSON z modelu. Spróbuj ponownie.")
