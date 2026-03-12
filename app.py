@@ -7,7 +7,7 @@ import time
 import shutil
 import tempfile
 import os
-import base64 # 👈 Nowa biblioteka do kodowania obrazów dla VLM
+import base64
 from pathlib import Path
 import anthropic
 import ast 
@@ -302,7 +302,6 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     If an image is provided, use it to understand the visual context of the element in question (e.g., is the focus visible? is it a modal?).
     """
     
-    # 👈 Budujemy bogatszy kontekst z danymi HTML jeśli są dostępne
     html_context = violation_data.get('html_context', 'No DOM snippet available.')
     
     prompt_text = f"""
@@ -325,7 +324,6 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     ### ⚙️ Needs Manual Testing
     """
     
-    # Budowa wiadomości z obrazem LUB bez obrazu
     message_content = [{"type": "text", "text": prompt_text}]
     
     if screenshot_path and os.path.exists(screenshot_path):
@@ -343,9 +341,9 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
             st.warning(f"Failed to attach image to AI context: {e}")
 
     try:
-        # 👈 ZMIANA NA CLAUDE 3.5 SONNET
+        # 👈 Najnowszy i najpotężniejszy model Claude 3.5 Sonnet
         msg = client.messages.create(
-            model="claude-opus-4-6", 
+            model="claude-3-5-sonnet-20241022", 
             max_tokens=800,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
@@ -367,7 +365,8 @@ def build_driver():
 def fetch_axe():
     return requests.get("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.7.2/axe.min.js").text
 
-def perform_full_audit(url, page_type, country):
+# 👈 ZMIANA: Dodany parametr bypass_cookies do logiki audytu
+def perform_full_audit(url, page_type, country, bypass_cookies=False):
     lh = 0
     try:
         r = requests.get(f"https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={urllib.parse.quote(url)}&category=accessibility&key={GOOGLE_KEY}").json()
@@ -389,20 +388,29 @@ def perform_full_audit(url, page_type, country):
         driver.get(url)
         time.sleep(5)
         
+        # 👈 ZMIANA: Omijanie banera cookies jeśli użytkownik to zaznaczy
+        if bypass_cookies:
+            driver.execute_script("""
+                let uc = document.getElementById('usercentrics-root');
+                if (uc) { uc.remove(); }
+                document.body.style.overflow = 'auto';
+                document.body.style.position = 'static';
+            """)
+            time.sleep(2) # Czas na przerysowanie strony bez banera
+        
         # --- AXE CORE ---
         driver.execute_script(fetch_axe())
         res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
         violations = res.get("violations", [])
         axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
         
-        # --- TAB-ANALYZER (Deep DOM Extraction) ---
+        # --- TAB-ANALYZER ---
         actions = ActionChains(driver)
         focused_elements = []
         
         for _ in range(30):
             actions.send_keys(Keys.TAB).perform()
             
-            # 👈 ZMIANA: Pobieramy outerHTML zamiast tylko tagu
             elem_data = driver.execute_script("""
                 let el = document.activeElement;
                 if (!el || el === document.body) return null;
@@ -412,7 +420,7 @@ def perform_full_audit(url, page_type, country):
                 
                 return {
                     tag: el.tagName.toLowerCase(),
-                    html: el.outerHTML.substring(0, 300), // Pobieramy do 300 znaków kodu HTML
+                    html: el.outerHTML.substring(0, 300),
                     text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').substring(0, 40).trim(),
                     visible: isVisible
                 };
@@ -422,7 +430,6 @@ def perform_full_audit(url, page_type, country):
                 focused_elements.append(elem_data)
                 
                 if not elem_data['visible']:
-                    # Zapisujemy jako słownik, żeby łatwiej przekazać HTML do AI
                     issue = {
                         "type": "hidden_focus",
                         "desc": f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}",
@@ -558,20 +565,17 @@ def display_results(df):
                         "help": issue.get('desc'),
                         "html_context": issue.get('html_context')
                     }
-                    # 👈 Przekazujemy ścieżkę do obrazu do modelu VLM
                     st.markdown(get_ai_recommendation(mock_violation, row['Type'], screenshot_to_send))
                 else:
                     sorted_violations = sorted(violations, key=lambda x: {"critical": 0, "serious": 1}.get(x.get("impact"), 4))
                     top_v = sorted_violations[0] 
                     st.write(f"**Top Issue:** {top_v['help']} (Severity: {top_v.get('impact', 'unknown').upper()})")
                     
-                    # Ekstrakcja HTML z błędów Axe (jeśli dostępne)
                     html_snippet = top_v.get("nodes", [{}])[0].get("html", "No DOM snippet available.")
                     top_v["html_context"] = html_snippet
                     if html_snippet != "No DOM snippet available.":
                         st.code(html_snippet, language="html")
                         
-                    # 👈 Przekazujemy ścieżkę do obrazu do modelu VLM
                     st.markdown(get_ai_recommendation(top_v, row['Type'], screenshot_to_send))
 
 # --- MAIN ---
@@ -605,12 +609,21 @@ if check_password():
         sel_countries = c1.multiselect("Select Markets", options, default=options)
         sel_types = c2.multiselect("Select Pages", ["home", "category", "product"], default=["home"])
 
+        # 👈 ZMIANA: Checkbox do omijania banera
+        st.write("### ⚙️ Advanced Auditor Settings")
+        bypass_cookies = st.checkbox(
+            "🪄 Bypass Cookie Banner (Remove Usercentrics overlay)", 
+            value=True, 
+            help="Check this to remove the cookie banner and audit the underlying page content. Uncheck to audit the banner itself."
+        )
+
         if st.button("Run Audit", type="primary"):
             results = []
             for c in sel_countries:
                 for t in sel_types:
                     st.write(f"Auditing {c} - {t.capitalize()}...")
-                    results.append(perform_full_audit(COUNTRIES[c].get(t, SSO_LOGIN), t, c))
+                    # 👈 ZMIANA: Przekazywanie bypass_cookies do logiki
+                    results.append(perform_full_audit(COUNTRIES[c].get(t, SSO_LOGIN), t, c, bypass_cookies))
             st.session_state["last_res"] = pd.DataFrame(results)
             st.rerun()
 
