@@ -320,7 +320,7 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
 
     try:
         msg = client.messages.create(
-            model="claude-3-5-sonnet-20241022", 
+            model="claude-sonnet-4-6", 
             max_tokens=800,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
