@@ -20,6 +20,12 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 
+# Dodajemy bibliotekę do analizy czytelności (Dostępność Kognitywna)
+try:
+    import textstat
+except ImportError:
+    textstat = None
+
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Lyreco Accessibility Monitor", layout="wide")
 
@@ -114,7 +120,7 @@ class PDFReport(FPDF):
 
     def chapter_title(self, label):
         self.set_font('Arial', 'B', 16)
-        self.set_text_color(45, 46, 135) 
+        self.set_text_color(45, 46, 135) # Lyreco Blue
         self.cell(0, 10, label, 0, 1, 'L')
         self.ln(4)
 
@@ -154,27 +160,30 @@ def generate_w3c_pdf(df):
     elif avg_score >= 60: verdict = "Partial Compliance"
     
     tab_sum = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
+    adv_sum = int(df.get('Advanced_Issues_Count', pd.Series([0]*len(df))).sum())
     
     summary_text = (
         f"This report presents the results of an automated accessibility evaluation of the Lyreco e-commerce platform. "
         f"The overall score is {avg_score:.1f}/100 ('{verdict}'). "
-        f"Found {int(df['Critical'].sum())} critical blockers, {int(df['Serious'].sum())} serious issues, and {tab_sum} keyboard navigation barriers."
+        f"Found {int(df['Critical'].sum())} critical blockers, {tab_sum} keyboard navigation barriers, and {adv_sum} advanced technology compliance issues."
     )
     pdf.chapter_body(summary_text)
 
     pdf.chapter_title("2. Scope of Evaluation")
     pdf.set_font('Arial', 'B', 10)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(40, 10, "Market", 1, 0, 'C', 1)
-    pdf.cell(40, 10, "Page Type", 1, 0, 'C', 1)
-    pdf.cell(110, 10, "URL (Truncated)", 1, 1, 'C', 1)
+    pdf.cell(30, 10, "Market", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Page Type", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Viewport", 1, 0, 'C', 1)
+    pdf.cell(100, 10, "URL (Truncated)", 1, 1, 'C', 1)
     
     pdf.set_font('Arial', '', 9)
     for _, row in df.iterrows():
-        pdf.cell(40, 8, row['Country'], 1)
-        pdf.cell(40, 8, row['Type'].capitalize(), 1)
-        short_url = (row['URL'][:55] + '...') if len(row['URL']) > 55 else row['URL']
-        pdf.cell(110, 8, short_url, 1, 1)
+        pdf.cell(30, 8, row['Country'], 1)
+        pdf.cell(30, 8, row['Type'].capitalize(), 1)
+        pdf.cell(30, 8, str(row.get('Viewport', 'desktop')).capitalize(), 1)
+        short_url = (row['URL'][:50] + '...') if len(row['URL']) > 50 else row['URL']
+        pdf.cell(100, 8, short_url, 1, 1)
     pdf.ln(10)
 
     pdf.chapter_title("3. Detailed Findings")
@@ -188,38 +197,55 @@ def generate_w3c_pdf(df):
         if isinstance(tab_issues, str):
             try: tab_issues = ast.literal_eval(tab_issues)
             except: tab_issues = []
+
+        adv_issues = row.get("Advanced_Issues_Details", "[]")
+        if isinstance(adv_issues, str):
+            try: adv_issues = ast.literal_eval(adv_issues)
+            except: adv_issues = []
         
         serious_violations = [v for v in violations if v.get('impact') in ['critical', 'serious']]
         
-        if serious_violations or tab_issues:
+        if serious_violations or tab_issues or adv_issues:
             pdf.set_font('Arial', 'B', 11)
             pdf.set_text_color(45, 46, 135)
-            pdf.cell(0, 10, f"{row['Country']} - {row['Type'].capitalize()} (Score: {row['Score']})", 0, 1)
+            pdf.cell(0, 10, f"{row['Country']} - {row['Type'].capitalize()} [{row.get('Viewport', 'desktop')}] (Score: {row['Score']})", 0, 1)
             
             pdf.set_font('Arial', 'B', 9)
             pdf.set_text_color(0)
             pdf.set_fill_color(220, 220, 220)
-            pdf.cell(30, 8, "Impact", 1, 0, 'C', 1)
-            pdf.cell(60, 8, "Issue ID", 1, 0, 'C', 1)
-            pdf.cell(100, 8, "Description", 1, 1, 'C', 1)
+            pdf.cell(25, 8, "Impact", 1, 0, 'C', 1)
+            pdf.cell(50, 8, "Issue ID / Type", 1, 0, 'C', 1)
+            pdf.cell(115, 8, "Description", 1, 1, 'C', 1)
             
             pdf.set_font('Arial', '', 8)
+            
+            # Tab / Keyboard Navigation issues
             for t_issue in tab_issues:
                 pdf.set_text_color(200, 0, 0)
-                pdf.cell(30, 8, "CRITICAL", 1, 0, 'C')
+                pdf.cell(25, 8, "CRITICAL", 1, 0, 'C')
                 pdf.set_text_color(0)
-                pdf.cell(60, 8, "keyboard-nav-trap", 1, 0)
-                desc = (t_issue[:55] + '..') if len(t_issue) > 55 else t_issue
-                pdf.cell(100, 8, desc, 1, 1)
-                
+                pdf.cell(50, 8, "keyboard-nav-trap", 1, 0)
+                desc = (t_issue.get("desc", str(t_issue))[:65] + '..') if len(t_issue.get("desc", str(t_issue))) > 65 else t_issue.get("desc", str(t_issue))
+                pdf.cell(115, 8, desc, 1, 1)
+            
+            # Advanced Tech Issues (Target Size, Dragon, Zoomtext)
+            for a_issue in adv_issues:
+                pdf.set_text_color(200, 0, 0)
+                pdf.cell(25, 8, "CRITICAL", 1, 0, 'C')
+                pdf.set_text_color(0)
+                pdf.cell(50, 8, a_issue.get("type", "advanced"), 1, 0)
+                desc = (a_issue.get("desc", "")[:65] + '..') if len(a_issue.get("desc", "")) > 65 else a_issue.get("desc", "")
+                pdf.cell(115, 8, desc, 1, 1)
+
+            # Axe Core issues
             for v in serious_violations:
                 impact = v.get('impact', 'minor').upper()
                 pdf.set_text_color(200, 0, 0) if impact == 'CRITICAL' else pdf.set_text_color(0)
-                pdf.cell(30, 8, impact, 1, 0, 'C')
+                pdf.cell(25, 8, impact, 1, 0, 'C')
                 pdf.set_text_color(0)
-                pdf.cell(60, 8, v['id'], 1, 0)
-                desc = (v['help'][:55] + '..') if len(v['help']) > 55 else v['help']
-                pdf.cell(100, 8, desc, 1, 1)
+                pdf.cell(50, 8, v['id'], 1, 0)
+                desc = (v['help'][:65] + '..') if len(v['help']) > 65 else v['help']
+                pdf.cell(115, 8, desc, 1, 1)
             pdf.ln(5)
             
     return pdf.output(dest='S').encode('latin-1', 'replace')
@@ -242,15 +268,17 @@ def generate_accessibility_statement_pdf(df):
     
     pdf.chapter_title("Assessment Approach")
     pdf.chapter_body("Lyreco assessed the accessibility by the following approaches:")
-    pdf.cell(0, 6, "- Automated evaluation (Axe, WAVE, Lighthouse).", 0, 1)
+    pdf.cell(0, 6, "- Automated evaluation (Axe, WAVE, Lighthouse, W3C Nu).", 0, 1)
     pdf.cell(0, 6, "- AI Vision-Language Model heuristic analysis.", 0, 1)
     pdf.cell(0, 6, "- Automated Keyboard Navigation simulation.", 0, 1)
+    pdf.cell(0, 6, "- Advanced Technology Emulation (Dragon, JAWS, ZoomText).", 0, 1)
     pdf.ln(5)
 
     pdf.chapter_title("Identified Limitations")
     total_critical = int(df['Critical'].sum())
     total_serious = int(df['Serious'].sum())
     total_tab = int(df.get('Tab_Issues_Count', pd.Series([0]*len(df))).sum())
+    total_adv = int(df.get('Advanced_Issues_Count', pd.Series([0]*len(df))).sum())
     
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 6, f"Metrics (Date: {datetime.now().strftime('%Y-%m-%d')}):", 0, 1)
@@ -258,6 +286,7 @@ def generate_accessibility_statement_pdf(df):
     pdf.cell(0, 6, f"- Critical Access Blockers: {total_critical}", 0, 1)
     pdf.cell(0, 6, f"- Serious Accessibility Issues: {total_serious}", 0, 1)
     pdf.cell(0, 6, f"- Keyboard Navigation Barriers: {total_tab}", 0, 1)
+    pdf.cell(0, 6, f"- Screen Reader / Voice / Magnification Issues: {total_adv}", 0, 1)
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -294,11 +323,11 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
     If an image is provided, use it to understand the visual context of the element in question.
     """
     html_context = violation_data.get('html_context', 'No DOM snippet available.')
+    issue_desc = violation_data.get('desc', violation_data.get('help', 'Unknown issue'))
+    
     prompt_text = f"""
     Analyze this WCAG violation found on the Lyreco {page_context} page.
-    ID: {violation_data.get('id', 'unknown')}
-    Impact: {violation_data.get('impact', 'unknown')}
-    Issue: {violation_data.get('help', '')}
+    Issue: {issue_desc}
     
     DOM:
     ```html
@@ -320,7 +349,7 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
 
     try:
         msg = client.messages.create(
-            model="claude-sonnet-4-6", 
+            model="claude-3-5-sonnet-20241022", 
             max_tokens=800,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
@@ -357,7 +386,7 @@ def run_guided_heuristics(screenshot_path, page_type):
         ]
         
         msg = client.messages.create(
-            model="claude-sonnet-4-6", # Model wskazany przez użytkownika
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1024,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
@@ -374,36 +403,55 @@ def run_guided_heuristics(screenshot_path, page_type):
         return [{"element": "System API", "issue_type": "Error", "ai_judgment": "FAIL", "reasoning": str(e)}]
 
 # --- SELENIUM & AUDIT FUNCTIONS ---
-def build_driver():
+def build_driver(viewport="desktop"):
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--window-size=1280,1024")
+    
+    if viewport == "mobile":
+        opts.add_argument("--window-size=375,812")
+        opts.add_argument("--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1")
+    elif viewport == "tablet":
+        opts.add_argument("--window-size=768,1024")
+    else:
+        opts.add_argument("--window-size=1280,1024")
+        
     return webdriver.Chrome(service=Service(shutil.which("chromedriver") or "/usr/bin/chromedriver"), options=opts)
 
 @st.cache_data(ttl=3600)
 def fetch_axe():
     return requests.get("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.7.2/axe.min.js").text
 
-def perform_full_audit(url, page_type, country, bypass_cookies=False):
-    lh = 0
+def perform_full_audit(url, page_type, country, bypass_cookies=False, viewport="desktop"):
+    lh, w_err, w_con, w3c_errors = 0, 0, 0, 0
+    
+    # Lighthouse
     try:
         r = requests.get(f"https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={urllib.parse.quote(url)}&category=accessibility&key={GOOGLE_KEY}").json()
         lh = r["lighthouseResult"]["categories"]["accessibility"]["score"] * 100
     except: pass
     
-    w_err, w_con = 0, 0
+    # WAVE
     try:
         r = requests.get(f"https://wave.webaim.org/api/request?key={WAVE_KEY}&url={url}").json()
         w_err = r["categories"]["error"]["count"]
         w_con = r["categories"]["contrast"]["count"]
     except: pass
 
+    # W3C Nu API
+    try:
+        w3_req = requests.get(f"https://validator.w3.org/nu/?doc={urllib.parse.quote(url)}&out=json")
+        w3c_errors = sum(1 for m in w3_req.json().get("messages", []) if m.get("type") == "error")
+    except: pass
+
     axe_data = {"violations": [], "counts": {"critical": 0, "serious": 0}}
     tab_issues = []
+    advanced_issues = []
     shot = ""
-    driver = build_driver()
+    protanopia_shot = ""
+    
+    driver = build_driver(viewport)
     try:
         driver.get(url)
         time.sleep(5)
@@ -417,11 +465,82 @@ def perform_full_audit(url, page_type, country, bypass_cookies=False):
             """)
             time.sleep(2)
         
+        # Opcjonalnie: Dostępność kognitywna (jeśli textstat zainstalowany)
+        if textstat:
+            try:
+                page_text = driver.execute_script("return document.body.innerText;")
+                flesch_score = textstat.flesch_reading_ease(page_text)
+                if flesch_score < 40:
+                    advanced_issues.append({
+                        "type": "cognitive_readability", 
+                        "desc": f"Niska dostępność kognitywna. Tekst na stronie jest trudny w odbiorze (Flesch score: {flesch_score}). Wymagany poziom łatwiejszy."
+                    })
+            except: pass
+
+        # Axe-core
         driver.execute_script(fetch_axe())
         res = driver.execute_async_script("const cb = arguments[arguments.length - 1]; axe.run().then(r => cb(r));")
         violations = res.get("violations", [])
-        axe_data = {"violations": violations, "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), "serious": sum(1 for v in violations if v.get("impact") == "serious")}}
+        axe_data = {
+            "violations": violations, 
+            "counts": {"critical": sum(1 for v in violations if v.get("impact") == "critical"), 
+                       "serious": sum(1 for v in violations if v.get("impact") == "serious")}
+        }
         
+        # Wsparcie JAWS/Dragon (Konflikty ARIA vs widoczny tekst)
+        dragon_issues = driver.execute_script("""
+            let issues = [];
+            document.querySelectorAll('button, a, [role="button"]').forEach(el => {
+                let visibleText = el.innerText.trim().toLowerCase();
+                let ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                if (visibleText && ariaLabel && !ariaLabel.includes(visibleText)) {
+                    issues.push({
+                        type: "voice_control_blocker",
+                        desc: `Konflikt Dragon/JAWS: Widoczny tekst to "${visibleText}", ale aria-label w kodzie to "${ariaLabel}".`,
+                        html_context: el.outerHTML.substring(0, 150)
+                    });
+                }
+            });
+            return issues.slice(0, 3); // Ograniczamy do pierwszych 3 dla czytelności
+        """)
+        advanced_issues.extend(dragon_issues)
+
+        # WCAG 2.2 Target Size (Rozmiar dotykowy)
+        target_issues = driver.execute_script("""
+            let tinyElements = [];
+            document.querySelectorAll('button, a, input, [tabindex="0"]').forEach(el => {
+                let rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    if (rect.width < 24 || rect.height < 24) {
+                        tinyElements.push({
+                            type: "wcag_22_target_size",
+                            desc: `Element zbyt mały do kliknięcia na dotyku: ${Math.round(rect.width)}x${Math.round(rect.height)}px. Minimum to 24x24px.`,
+                            html_context: el.outerHTML.substring(0, 150)
+                        });
+                    }
+                }
+            });
+            return tinyElements.slice(0, 3);
+        """)
+        advanced_issues.extend(target_issues)
+        
+        # Symulacja ZoomText (Reflow do 400%)
+        zoom_issues = driver.execute_script("""
+            document.body.style.zoom = "400%";
+            let hasHorizontalScroll = document.documentElement.scrollWidth > window.innerWidth;
+            let issues = [];
+            if (hasHorizontalScroll) {
+                issues.push({
+                    type: "zoomtext_reflow_failure",
+                    desc: "KRYTYCZNE (ZoomText): Po powiększeniu strony do 400% pojawia się poziomy pasek przewijania. Użytkownik z wadą wzroku zgubi orientację."
+                });
+            }
+            document.body.style.zoom = "100%";
+            return issues;
+        """)
+        advanced_issues.extend(zoom_issues)
+
+        # Nawigacja klawiaturą (Tab)
         actions = ActionChains(driver)
         focused_elements = []
         
@@ -442,32 +561,48 @@ def perform_full_audit(url, page_type, country, bypass_cookies=False):
             if elem_data:
                 focused_elements.append(elem_data)
                 if not elem_data['visible']:
-                    issue = {"type": "hidden_focus", "desc": f"Hidden element received focus: <{elem_data['tag']}> {elem_data['text']}", "html_context": elem_data['html']}
+                    issue = {"type": "hidden_focus", "desc": f"Ukryty element otrzymał focus: <{elem_data['tag']}> {elem_data['text']}", "html_context": elem_data['html']}
                     if issue not in tab_issues: tab_issues.append(issue)
 
+        # Wykrywanie pułapki klawiaturowej
         if len(focused_elements) > 5:
             last_five = [e['tag'] + e['text'] for e in focused_elements[-5:]]
             if len(set(last_five)) == 1:
-                trap = {"type": "keyboard_trap", "desc": f"Keyboard Trap at: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}", "html_context": focused_elements[-1]['html']}
+                trap = {"type": "keyboard_trap", "desc": f"Keyboard Trap (Uwięzienie Klawiatury) w komponencie: <{focused_elements[-1]['tag']}> {focused_elements[-1]['text']}", "html_context": focused_elements[-1]['html']}
                 if trap not in tab_issues: tab_issues.append(trap)
 
-        if axe_data["counts"]["critical"] > 0 or len(tab_issues) > 0:
+        # Standardowy zrzut ekranu w razie błędów
+        if axe_data["counts"]["critical"] > 0 or len(tab_issues) > 0 or len(advanced_issues) > 0:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 driver.save_screenshot(tmp.name)
                 shot = tmp.name
+                
+            # Wykorzystanie CDP (Chrome DevTools Protocol) do symulacji ślepoty barw (tylko na desktop, aby było czytelnie)
+            if viewport == "desktop":
+                driver.execute_cdp_cmd('Emulation.setEmulatedVisionDeficiency', {'type': 'protanopia'})
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_cb:
+                    driver.save_screenshot(tmp_cb.name)
+                    protanopia_shot = tmp_cb.name
+                driver.execute_cdp_cmd('Emulation.setEmulatedVisionDeficiency', {'type': 'none'}) # Wyłączenie filtru
                 
     finally: driver.quit()
 
     wave_s = max(0, 100 - (w_err * 2 + w_con * 0.5))
     axe_s = max(0, 100 - (axe_data["counts"]["critical"] * 5 + axe_data["counts"]["serious"] * 2))
+    
+    # Kary za zaawansowane błędy
     tab_penalty = len(tab_issues) * 5
-    final = max(0, round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty, 1))
+    adv_penalty = len(advanced_issues) * 3
+    w3c_penalty = w3c_errors * 0.5
+    
+    final = max(0, round((lh * 0.4) + (wave_s * 0.3) + (axe_s * 0.3) - tab_penalty - adv_penalty - w3c_penalty, 1))
 
     return {
-        "Country": country, "Type": page_type, "Score": final, 
-        "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], 
+        "Country": country, "Type": page_type, "Viewport": viewport, "Score": final, 
+        "Critical": axe_data["counts"]["critical"], "Serious": axe_data["counts"]["serious"], "W3C_Errors": w3c_errors,
         "Tab_Issues_Count": len(tab_issues), "Tab_Issues_Details": str(tab_issues), 
-        "URL": url, "Screenshot": shot, "Violations": violations
+        "Advanced_Issues_Count": len(advanced_issues), "Advanced_Issues_Details": str(advanced_issues),
+        "URL": url, "Screenshot": shot, "Protanopia_Shot": protanopia_shot, "Violations": violations
     }
 
 def run_widget_crash_test(url):
@@ -541,9 +676,9 @@ def display_results(df):
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Avg Score", f"{df['Score'].mean():.1f}")
     m2.metric("Critical", int(df["Critical"].sum()))
-    m3.metric("Serious", int(df["Serious"].sum()))
-    m4.metric("Tab Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum()))
-    m5.metric("Markets", len(df["Country"].unique()))
+    m3.metric("Tab / Nav Errors", int(df.get("Tab_Issues_Count", pd.Series([0]*len(df))).sum()))
+    m4.metric("Advanced / UX Issues", int(df.get("Advanced_Issues_Count", pd.Series([0]*len(df))).sum()))
+    m5.metric("W3C HTML Errors", int(df.get("W3C_Errors", pd.Series([0]*len(df))).sum()))
 
     st.subheader("Market Compliance Heatmap")
     st.dataframe(df.pivot_table(index="Country", columns="Type", values="Score").style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100), use_container_width=True)
@@ -556,15 +691,22 @@ def display_results(df):
             try: violations = ast.literal_eval(violations)
             except: violations = []
         for v in violations:
-            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Impact": v.get("impact", "minor").capitalize(), "Description": v["help"]})
+            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Viewport": row.get("Viewport", "desktop"), "Impact": v.get("impact", "minor").capitalize(), "Description": v["help"]})
             
         tab_issues = row.get("Tab_Issues_Details", "[]")
         if isinstance(tab_issues, str):
             try: tab_issues = ast.literal_eval(tab_issues)
             except: tab_issues = []
         for t_issue in tab_issues:
-            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Impact": "Critical", "Description": t_issue.get("desc", str(t_issue))})
-    
+            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Viewport": row.get("Viewport", "desktop"), "Impact": "Critical", "Description": t_issue.get("desc", str(t_issue))})
+            
+        adv_issues = row.get("Advanced_Issues_Details", "[]")
+        if isinstance(adv_issues, str):
+            try: adv_issues = ast.literal_eval(adv_issues)
+            except: adv_issues = []
+        for a_issue in adv_issues:
+            v_rows.append({"Country": row["Country"], "Page": row["Type"].capitalize(), "Viewport": row.get("Viewport", "desktop"), "Impact": "Critical", "Description": a_issue.get("desc", str(a_issue))})
+
     if v_rows:
         v_df = pd.DataFrame(v_rows)
         v_df["sort_idx"] = v_df["Impact"].map({"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}).fillna(4)
@@ -574,21 +716,33 @@ def display_results(df):
     for _, row in df.iterrows():
         violations = ast.literal_eval(row["Violations"]) if isinstance(row["Violations"], str) else row["Violations"]
         tab_issues = ast.literal_eval(row.get("Tab_Issues_Details", "[]")) if isinstance(row.get("Tab_Issues_Details"), str) else row.get("Tab_Issues_Details", [])
+        adv_issues = ast.literal_eval(row.get("Advanced_Issues_Details", "[]")) if isinstance(row.get("Advanced_Issues_Details"), str) else row.get("Advanced_Issues_Details", [])
 
-        if violations or tab_issues:
-            with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()}"):
+        if violations or tab_issues or adv_issues:
+            with st.expander(f"Strategy: {row['Country']} - {row['Type'].capitalize()} ({row.get('Viewport', 'desktop')})"):
                 shot = row.get("Screenshot") if row.get("Screenshot") != "" else None
-                if tab_issues:
-                    issue = tab_issues[0]
-                    st.write(f"**Issue:** {issue.get('desc')}")
-                    st.code(issue.get('html_context', ''), language="html")
-                    st.markdown(get_ai_recommendation({"id": "keyboard-trap", "impact": "critical", "help": issue.get('desc'), "html_context": issue.get('html_context')}, row['Type'], shot))
-                else:
+                protanopia_shot = row.get("Protanopia_Shot") if row.get("Protanopia_Shot") != "" else None
+                
+                # Prezentacja wizualna z symulacją wad wzroku
+                if shot or protanopia_shot:
+                    img_cols = st.columns(2)
+                    if shot and os.path.exists(shot): img_cols[0].image(shot, caption="Standardowy zrzut widoku")
+                    if protanopia_shot and os.path.exists(protanopia_shot): img_cols[1].image(protanopia_shot, caption="Symulacja ślepoty barw (Protanopia)")
+                
+                # Priorytetyzacja wyświetlania błędu do AI
+                target_issue = None
+                if tab_issues: target_issue = {"id": "keyboard-trap", "impact": "critical", "help": tab_issues[0].get('desc'), "html_context": tab_issues[0].get('html_context')}
+                elif adv_issues: target_issue = {"id": "advanced-tech", "impact": "critical", "help": adv_issues[0].get('desc'), "html_context": adv_issues[0].get('html_context')}
+                else: 
                     top_v = sorted(violations, key=lambda x: {"critical": 0, "serious": 1}.get(x.get("impact"), 4))[0] 
-                    st.write(f"**Issue:** {top_v['help']}")
-                    top_v["html_context"] = top_v.get("nodes", [{}])[0].get("html", "")
-                    st.code(top_v["html_context"], language="html")
-                    st.markdown(get_ai_recommendation(top_v, row['Type'], shot))
+                    target_issue = {"id": top_v["id"], "impact": top_v.get("impact"), "help": top_v["help"], "html_context": top_v.get("nodes", [{}])[0].get("html", "")}
+
+                st.write(f"**Issue:** {target_issue['help']}")
+                st.code(target_issue.get("html_context", ""), language="html")
+                
+                if st.button("Pobierz zalecenia naprawcze od Claude", key=f"ai_btn_{row['Country']}_{row['Type']}_{row.get('Viewport', 'desktop')}"):
+                    with st.spinner("Claude analizuje DOM i zrzuty ekranu..."):
+                        st.markdown(get_ai_recommendation(target_issue, row['Type'], shot))
 
 # --- MAIN ---
 if check_password():
@@ -611,17 +765,44 @@ if check_password():
     tab1, tab2, tab3, tab4 = st.tabs(["🚀 New Audit", "📂 History", "🎯 Widget Crash-Tester", "🧑‍💻 Guided Testing"])
     
     with tab1:
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         opts = list(COUNTRIES.keys()) if st.session_state["role"] == "admin" else ["France"]
         sel_c = c1.multiselect("Markets", opts, default=opts)
         sel_t = c2.multiselect("Pages", ["home", "category", "product"], default=["home"])
+        sel_v = c3.selectbox("Rozdzielczość urządzenia (Viewport)", ["desktop", "tablet", "mobile"])
 
         bypass = st.checkbox("🪄 Bypass Cookie Banner", value=True)
 
+        # PASEK POSTĘPU Z WIZUALIZACJĄ:
         if st.button("Run Audit", type="primary"):
-            res = [perform_full_audit(COUNTRIES[c].get(t, SSO_LOGIN), t, c, bypass) for c in sel_c for t in sel_t]
-            st.session_state["last_res"] = pd.DataFrame(res)
-            st.rerun()
+            total_tasks = len(sel_c) * len(sel_t)
+            
+            if total_tasks == 0:
+                st.warning("⚠️ Wybierz przynajmniej jeden rynek i stronę!")
+            else:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                res = []
+                
+                current_task = 0
+                for c in sel_c:
+                    for t in sel_t:
+                        status_text.info(f"🔍 Skanowanie urządzenia **{sel_v}**: rynek {c} - strona {t.capitalize()}... (Trwa analiza Selenium, WAVE, axe, TargetSize, JAWS/Dragon)")
+                        url_to_test = COUNTRIES[c].get(t, SSO_LOGIN)
+                        
+                        audit_result = perform_full_audit(url_to_test, t, c, bypass, sel_v)
+                        res.append(audit_result)
+                        
+                        current_task += 1
+                        progress_bar.progress(current_task / total_tasks)
+                
+                status_text.success("✅ Audyt zakończony sukcesem!")
+                time.sleep(1) # Zostawienie statusu 100% na chwilę dla użytkownika
+                status_text.empty()
+                progress_bar.empty()
+                
+                st.session_state["last_res"] = pd.DataFrame(res)
+                st.rerun()
 
         if "last_res" in st.session_state: display_results(st.session_state["last_res"])
 
@@ -648,7 +829,6 @@ if check_password():
                     else: c2.error("❌ Leaves Ghosts")
                     for i in res["issues"]: st.error(i)
 
-    # --- NOWA ZAKŁADKA: GUIDED TESTING ---
     with tab4:
         st.header("🧑‍💻 AI + Human Guided Testing")
         st.write("Sztuczna inteligencja (Claude) ocenia wizualne aspekty strony. Tam, gdzie kontekst jest niejednoznaczny, prosi Cię o ostateczny werdykt audytora.")
@@ -656,7 +836,7 @@ if check_password():
         gt_url = st.text_input("Adres URL do weryfikacji manualnej:", "https://shop.lyreco.fr/fr", key="gt_url")
         
         if st.button("Uruchom analizę hybrydową", type="primary", key="btn_gt"):
-            with st.spinner("Pobieram zrzut ekranu i analizuję wizualnie (Model: claude-sonnet-4-6)..."):
+            with st.spinner("Pobieram zrzut ekranu i analizuję wizualnie (Model: claude-3-5-sonnet)..."):
                 driver = build_driver()
                 gt_shot = ""
                 try:
