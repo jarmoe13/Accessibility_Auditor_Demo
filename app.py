@@ -354,7 +354,7 @@ def get_ai_recommendation(violation_data, page_context, screenshot_path=None):
             model="claude-sonnet-4-6", 
             max_tokens=800,
             system="You are an expert in web accessibility and WCAG compliance. Always respond in English, regardless of the language of the input.",
-            messages=[{"role": "user", "content": message_content}]
+            messages=[{"role": "user", "content": message_content}],
             temperature=0.1,
         )
         return msg.content[0].text
