@@ -84,10 +84,10 @@ COUNTRIES = {
         "category": "https://shop.lyreco.co.uk/en/list/001001/paper-envelopes/white-office-paper",
         "product": "https://shop.lyreco.co.uk/en/product/159.543/lyreco-white-a4-80gsm-copier-paper-box-of-5-reams-5x500-sheets-of-paper",
     },
-    "Italy": {
-        "home": "https://shop.lyreco.it/it",
-        "category": "https://shop.lyreco.it/it/list/001001/carte-e-buste/carta-bianca",
-        "product": "https://shop.lyreco.it/it/product/4.016.865/carta-bianca-lyreco-a4-75-g-mq-risma-500-fogli",
+    "Ireland": {
+        "home": "https://www.lyreco.ie/en",
+        "category": "https://www.lyreco.ie/en/list/001001001/paper-envelopes/white-office-paper/paper-a4-size",
+        "product": "https://www.lyreco.ie/en/product/159.543/lyreco-white-a4-80gsm-copier-paper-box-of-5-reams-5x500-sheets-of-paper",
     },
     "Poland": {
         "home": "https://shop.lyreco.pl/pl",
