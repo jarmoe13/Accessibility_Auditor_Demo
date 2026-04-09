@@ -389,7 +389,7 @@ def run_guided_heuristics(screenshot_path, page_type):
         ]
         
         msg = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             system=system_prompt,
             messages=[{"role": "user", "content": message_content}]
@@ -715,7 +715,7 @@ def display_results(df):
         v_df["sort_idx"] = v_df["Impact"].map({"Critical": 0, "Serious": 1, "Moderate": 2, "Minor": 3}).fillna(4)
         st.dataframe(v_df.sort_values(by=["sort_idx", "Country"]).drop(columns=["sort_idx"]), use_container_width=True, hide_index=True)
 
-    st.subheader("🧠 AI Accessibility Advisor (Claude 3.5 Sonnet)")
+    st.subheader("🧠 AI Accessibility Advisor (Claude 4.6 Sonnet)")
     for _, row in df.iterrows():
         violations = ast.literal_eval(row["Violations"]) if isinstance(row["Violations"], str) else row["Violations"]
         tab_issues = ast.literal_eval(row.get("Tab_Issues_Details", "[]")) if isinstance(row.get("Tab_Issues_Details"), str) else row.get("Tab_Issues_Details", [])
@@ -849,7 +849,7 @@ if check_password():
         gt_url = st.text_input("URL for manual verification:", "https://shop.lyreco.fr/fr", key="gt_url")
         
         if st.button("Run hybrid analysis", type="primary", key="btn_gt"):
-            with st.spinner("Capturing screenshot and analyzing visually (Model: claude-3-5-sonnet)..."):
+            with st.spinner("Capturing screenshot and analyzing visually (Model: claude-4-6-sonnet)..."):
                 driver = build_driver()
                 gt_shot = ""
                 try:
